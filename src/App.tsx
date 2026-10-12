@@ -32,11 +32,22 @@ import {
   removePersistentImage,
   clearAllPersistentImages,
   getPersistentProducts,
-  getPersistentContent
+  savePersistentProducts,
+  getPersistentContent,
+  savePersistentContent
 } from './utils/persistentStorage';
-import { saveImageToFirestore, getAllImagesFromFirestore } from './firebase';
+import {
+  saveImageToFirestore,
+  getAllImagesFromFirestore,
+  getProductsFromFirestore,
+  subscribeToProductsFromFirestore,
+  subscribeToImagesFromFirestore,
+  subscribeToSiteContentFromFirestore,
+  subscribeToOrdersFromFirestore
+} from './firebase';
 import { resolveBedsheetImage } from './utils/imageUrl';
-import { ArrowRight, Sparkles, CheckCircle2, ShieldCheck, HeartHandshake, Phone, MessageCircle, Lock, Unlock, Cloud } from 'lucide-react';
+import { ArrowRight, Sparkles, CheckCircle2, ShieldCheck, HeartHandshake, Phone, MessageCircle, Lock, Unlock, Cloud, ChevronUp, ChevronDown } from 'lucide-react';
+import { motion, useScroll, useSpring, AnimatePresence } from 'motion/react';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'home' | 'catalogue' | 'story' | 'store' | 'orders' | 'tc'>('home');
@@ -50,6 +61,14 @@ export default function App() {
   }, [isAdminOpen]);
   const lastAdminSaveRef = React.useRef<number>(0);
 
+  // Smooth scroll progress indicator for luxury feel
+  const { scrollYProgress } = useScroll();
+  const scrollProgressX = useSpring(scrollYProgress, {
+    stiffness: 100,
+    damping: 30,
+    restDelta: 0.001
+  });
+
   const [isOwnerAuthOpen, setIsOwnerAuthOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [whatsAppHelperData, setWhatsAppHelperData] = useState<WhatsAppHelperData | null>(null);
@@ -62,6 +81,16 @@ export default function App() {
       return false;
     }
   });
+
+  // State to track scroll position for Home scroll-to-top button
+  const [showScrollTop, setShowScrollTop] = useState(false);
+  useEffect(() => {
+    const handleWindowScroll = () => {
+      setShowScrollTop(window.scrollY > 350);
+    };
+    window.addEventListener('scroll', handleWindowScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleWindowScroll);
+  }, []);
 
   // Dynamic products state with local storage persistence
   const [products, setProducts] = useState<BedsheetProduct[]>(() => {
@@ -78,6 +107,11 @@ export default function App() {
     }
     return BEDSHEETS_CATALOG;
   });
+
+  const productsRef = React.useRef(products);
+  React.useEffect(() => {
+    productsRef.current = products;
+  }, [products]);
 
   // Dynamic Orders state with local storage persistence
   const [orders, setOrders] = useState<Order[]>(() => {
@@ -149,7 +183,7 @@ export default function App() {
   useEffect(() => {
     let isMounted = true;
 
-    // Check IndexedDB immediately to ensure custom products and content load even if localStorage was quota-cleared
+    // 1. Initial fast local cache load from IndexedDB
     getPersistentProducts().then((idb) => {
       if (isMounted && idb && Array.isArray(idb) && idb.length > 0) {
         setProducts((curr) => {
@@ -169,43 +203,98 @@ export default function App() {
       }
     }).catch(() => {});
 
+    // 2. REAL-TIME FIREBASE FIRESTORE LISTENERS (GIVE STRICT PREFERENCE TO FIREBASE)
+    // Instantly syncs any photo upload or product change made on PC across all other devices
+    const unsubProducts = subscribeToProductsFromFirestore((cloudProducts) => {
+      if (!isMounted || isAdminOpenRef.current || !cloudProducts || cloudProducts.length === 0) return;
+      if (Date.now() - lastAdminSaveRef.current < 15000) return;
+
+      const orderMap = new Map(BEDSHEETS_CATALOG.map((p, idx) => [p.id, idx]));
+      const formatted = cloudProducts.map((p) => ({
+        ...p,
+        image: resolveBedsheetImage(p.image, p.id, p.updatedAt),
+      }));
+
+      formatted.sort((a, b) => {
+        const orderA = typeof (a as any).order === 'number' ? (a as any).order : (orderMap.get(a.id) ?? 999);
+        const orderB = typeof (b as any).order === 'number' ? (b as any).order : (orderMap.get(b.id) ?? 999);
+        return orderA - orderB;
+      });
+
+      setProducts(formatted);
+
+      // Keep customImages state in sync with latest photos
+      const newCustomMap: Record<string, string> = {};
+      formatted.forEach((p) => {
+        if (p.image) newCustomMap[p.id] = p.image;
+      });
+      setCustomImages((prev) => ({ ...prev, ...newCustomMap }));
+
+      // Keep local client cache updated
+      const cloudTime = Math.max(...formatted.map((p) => p.updatedAt || 0), Date.now());
+      savePersistentProducts(formatted, cloudTime).catch(() => {});
+      try {
+        const lightweight = formatted.map((p) =>
+          p.image?.startsWith('data:') ? { ...p, image: `/photo/${p.id}.jpg` } : p
+        );
+        localStorage.setItem('cotton_nest_products', JSON.stringify(lightweight));
+        localStorage.setItem('cotton_nest_products_updated_at', String(cloudTime));
+      } catch {}
+    });
+
+    const unsubImages = subscribeToImagesFromFirestore((cloudImgs) => {
+      if (!isMounted || !cloudImgs || Object.keys(cloudImgs).length === 0) return;
+      setCustomImages((prev) => ({ ...prev, ...cloudImgs }));
+    });
+
+    const unsubContent = subscribeToSiteContentFromFirestore((cloudContent) => {
+      if (!isMounted || !cloudContent || isAdminOpenRef.current) return;
+      setSiteContent(cloudContent);
+      savePersistentContent(cloudContent).catch(() => {});
+    });
+
+    const unsubOrders = subscribeToOrdersFromFirestore((cloudOrders) => {
+      if (!isMounted || !cloudOrders) return;
+      setOrders(cloudOrders);
+    });
+
+    // 3. Complete authoritative load giving direct preference to Firebase
     const loadDataFromServer = async () => {
       try {
-        const [serverProducts, serverOrders, serverContent, persistentImgs, firestoreImgs] = await Promise.all([
-          getProducts(),
-          getOrders(),
-          getSiteContent(),
-          getAllPersistentImages().catch(() => ({})),
-          getAllImagesFromFirestore().catch(() => ({})),
+        const [cloudProducts, cloudImgs, serverProducts, serverOrders, serverContent] = await Promise.all([
+          getProductsFromFirestore().catch(() => null),
+          getAllImagesFromFirestore().catch(() => ({} as Record<string, string>)),
+          getProducts().catch(() => null),
+          getOrders().catch(() => null),
+          getSiteContent().catch(() => null),
         ]);
+
         if (isMounted) {
-          const imgMap: Record<string, string> = { ...persistentImgs, ...firestoreImgs };
+          // Firebase Firestore takes preference!
+          const authoritative = (cloudProducts && cloudProducts.length > 0) ? cloudProducts : serverProducts;
 
-          // Discard corrupted duplicate overrides if all products were accidentally given the same photo
-          const imgValues = Object.values(imgMap).filter((v) => typeof v === 'string' && v.trim() !== '');
-          const isCorruptedDuplicate =
-            imgValues.length >= 3 &&
-            imgValues.every((val) => val === imgValues[0]);
-
-          if (isCorruptedDuplicate) {
-            console.warn('Detected duplicate corrupted photo override, discarding duplicate map...');
-            clearAllPersistentImages();
-            Object.keys(imgMap).forEach((k) => delete imgMap[k]);
-          }
-
-          if (serverProducts && serverProducts.length > 0) {
-            // Apply persistent images so uploaded photos NEVER revert
-            const mergedProducts = serverProducts.map((p) => {
-              const photo = imgMap[p.id] || p.image;
-              return { ...p, image: resolveBedsheetImage(photo, p.id) };
+          if (authoritative && authoritative.length > 0) {
+            const orderMap = new Map(BEDSHEETS_CATALOG.map((p, idx) => [p.id, idx]));
+            authoritative.sort((a, b) => {
+              const orderA = typeof (a as any).order === 'number' ? (a as any).order : (orderMap.get(a.id) ?? 999);
+              const orderB = typeof (b as any).order === 'number' ? (b as any).order : (orderMap.get(b.id) ?? 999);
+              return orderA - orderB;
             });
 
-            // NEVER overwrite if user has Admin Panel open or recently edited products
+            const mergedProducts = authoritative.map((p) => {
+              const photo = cloudImgs[p.id] || p.image;
+              return { ...p, image: resolveBedsheetImage(photo, p.id, p.updatedAt) };
+            });
+
             if (!isAdminOpenRef.current && Date.now() - lastAdminSaveRef.current > 20000) {
               setProducts(mergedProducts);
+              const newCustomMap: Record<string, string> = { ...cloudImgs };
+              mergedProducts.forEach((p) => {
+                if (p.image) newCustomMap[p.id] = p.image;
+              });
+              setCustomImages((prev) => ({ ...prev, ...newCustomMap }));
             }
           }
-          setCustomImages((prev) => ({ ...imgMap, ...prev }));
 
           if (serverOrders) {
             setOrders(serverOrders);
@@ -221,30 +310,42 @@ export default function App() {
 
     loadDataFromServer();
 
-    // When returning to tab or opening on phone, only refresh live customer orders
+    // When returning to tab or opening on phone, immediately refresh data
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && isMounted) {
-        getOrders().then((o) => {
-          if (o && isMounted) {
-            setOrders(o);
-          }
-        }).catch(() => {});
+        loadDataFromServer();
       }
     };
 
     window.addEventListener('visibilitychange', handleVisibilityChange);
 
-    // Background interval: ONLY poll orders to catch incoming customer orders without touching products or site content
+    // Background interval: Polls server to catch edits made on PC within seconds
     const interval = setInterval(() => {
-      getOrders().then((o) => {
-        if (o && isMounted) {
-          setOrders(o);
-        }
-      }).catch(() => {});
-    }, 45000);
+      if (document.visibilityState === 'visible' && isMounted && !isAdminOpenRef.current) {
+        fetch('/api/sync-check')
+          .then((r) => r.json())
+          .then((sync) => {
+            if (sync && typeof sync.timestamp === 'number') {
+              const currentTimestamp = Math.max(...productsRef.current.map((p) => p.updatedAt || 0), 0);
+              if (sync.timestamp > currentTimestamp) {
+                loadDataFromServer();
+              }
+            }
+          })
+          .catch(() => {});
+
+        getOrders().then((o) => {
+          if (o && isMounted) setOrders(o);
+        }).catch(() => {});
+      }
+    }, 10000);
 
     return () => {
       isMounted = false;
+      unsubProducts();
+      unsubImages();
+      unsubContent();
+      unsubOrders();
       window.removeEventListener('visibilitychange', handleVisibilityChange);
       clearInterval(interval);
     };
@@ -429,7 +530,7 @@ export default function App() {
 
       // 4. Update products and sync
       setProducts((prev) => {
-        const updated = prev.map((p) => (p.id === productId ? { ...p, image: finalUrl } : p));
+        const updated = prev.map((p) => (p.id === productId ? { ...p, image: finalUrl, updatedAt: Date.now() } : p));
         saveAllProducts(updated);
         return updated;
       });
@@ -572,6 +673,12 @@ export default function App() {
         />
       ) : (
         <>
+          {/* Top subtle golden luxury scroll progress indicator */}
+          <motion.div
+            style={{ scaleX: scrollProgressX, transformOrigin: '0%' }}
+            className="fixed top-0 left-0 right-0 h-[2.5px] bg-gradient-to-r from-[#C29E57] via-[#B83F60] to-[#C29E57] z-50 pointer-events-none"
+          />
+
           {/* Top Navbar */}
           <Navbar
             activeTab={activeTab}
@@ -605,10 +712,16 @@ export default function App() {
                 />
 
                 {/* Featured Showcase: 3 Spotlight bedsheets from the 9 */}
-                <section className="py-12 sm:py-16 bg-[#FAF7F2]">
+                <section id="curated-highlights" className="py-12 sm:py-16 bg-[#FAF7F2] relative">
                   <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                     
-                    <div className="flex flex-col md:flex-row md:items-end justify-between mb-8 gap-4">
+                    <motion.div
+                      initial={{ opacity: 0, y: 25 }}
+                      whileInView={{ opacity: 1, y: 0 }}
+                      viewport={{ once: true, margin: '-50px' }}
+                      transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+                      className="flex flex-col md:flex-row md:items-end justify-between mb-8 gap-4"
+                    >
                       <div>
                         <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#A8823B] uppercase tracking-wider mb-1">
                           <Sparkles className="w-3.5 h-3.5 text-[#C29E57]" />
@@ -632,37 +745,50 @@ export default function App() {
                         <span>Browse All {products.length} Bedsheets in Catalogue</span>
                         <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                       </button>
-                    </div>
+                    </motion.div>
 
-                    {/* 3 Featured Cards Grid */}
+                    {/* 3 Featured Cards Grid with Staggered Scroll Animations */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
-                      {products.slice(0, 3).map((product) => (
-                        <ProductCard
+                      {products.slice(0, 3).map((product, idx) => (
+                        <motion.div
                           key={product.id}
-                          product={product}
-                          onQuickView={setSelectedProduct}
-                          onAddToCart={(p) => handleAddToCart(p, 1)}
-                          isAdded={addedProductIds.has(product.id)}
-                          customImage={customImages[product.id]}
-                          onUploadImage={handleUploadImage}
-                          isOwnerMode={isOwnerMode}
-                        />
+                          initial={{ opacity: 0, y: 35 }}
+                          whileInView={{ opacity: 1, y: 0 }}
+                          viewport={{ once: true, margin: '-40px' }}
+                          transition={{ duration: 0.6, delay: idx * 0.14, ease: [0.22, 1, 0.36, 1] }}
+                        >
+                          <ProductCard
+                            product={product}
+                            onQuickView={setSelectedProduct}
+                            onAddToCart={(p) => handleAddToCart(p, 1)}
+                            isAdded={addedProductIds.has(product.id)}
+                            customImage={customImages[product.id]}
+                            onUploadImage={handleUploadImage}
+                            isOwnerMode={isOwnerMode}
+                          />
+                        </motion.div>
                       ))}
                     </div>
 
-                    {/* Direct CTA to open Special Catalogue */}
-                    <div className="mt-10 text-center">
+                    {/* Direct CTA to open Special Catalogue with Scroll Reveal */}
+                    <motion.div
+                      initial={{ opacity: 0, y: 20 }}
+                      whileInView={{ opacity: 1, y: 0 }}
+                      viewport={{ once: true }}
+                      transition={{ duration: 0.5, delay: 0.25 }}
+                      className="mt-10 text-center"
+                    >
                       <button
                         onClick={() => {
                           setActiveTab('catalogue');
                           window.scrollTo({ top: 0, behavior: 'smooth' });
                         }}
-                        className="px-8 py-3.5 bg-[#FDEAF0] hover:bg-[#F9D3DE] text-[#8C2E46] border border-[#FAD1DC] rounded-xl text-xs sm:text-sm font-semibold inline-flex items-center gap-2 transition-colors cursor-pointer shadow-xs"
+                        className="px-8 py-3.5 bg-[#FDEAF0] hover:bg-[#F9D3DE] text-[#8C2E46] border border-[#FAD1DC] rounded-xl text-xs sm:text-sm font-semibold inline-flex items-center gap-2 transition-all hover:shadow-md cursor-pointer shadow-xs active:scale-98"
                       >
                         <span>Open Full {products.length}-Sheet Catalogue</span>
                         <ArrowRight className="w-4 h-4" />
                       </button>
-                    </div>
+                    </motion.div>
 
                   </div>
                 </section>
@@ -816,6 +942,26 @@ export default function App() {
         data={whatsAppHelperData}
         onClose={() => setWhatsAppHelperData(null)}
       />
+
+      {/* Floating Smooth Scroll-to-Top Button */}
+      <AnimatePresence>
+        {showScrollTop && (
+          <motion.button
+            initial={{ opacity: 0, scale: 0.8, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.8, y: 20 }}
+            whileHover={{ scale: 1.1, y: -2 }}
+            whileTap={{ scale: 0.92 }}
+            transition={{ duration: 0.25 }}
+            onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+            className="fixed bottom-20 right-4 sm:bottom-8 sm:right-8 z-40 p-3 bg-[#FAF7F2]/95 backdrop-blur-md text-[#2C2420] border border-[#DEC89B] rounded-full shadow-lg hover:shadow-xl hover:border-[#C29E57] hover:bg-white transition-all cursor-pointer group"
+            title="Scroll back to top"
+            aria-label="Scroll back to top"
+          >
+            <ChevronUp className="w-5 h-5 text-[#A8823B] group-hover:text-[#B83F60] transition-colors" />
+          </motion.button>
+        )}
+      </AnimatePresence>
 
     </div>
   );

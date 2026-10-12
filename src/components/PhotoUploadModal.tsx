@@ -148,7 +148,7 @@ export const PhotoUploadModal: React.FC<PhotoUploadModalProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {displayProducts.map((product, idx) => {
               const hasCustom = !!customImages[product.id];
-              const currentImage = resolveBedsheetImage(customImages[product.id] || product.image);
+              const currentImage = resolveBedsheetImage(product.image || customImages[product.id], product.id, product.updatedAt);
 
               return (
                 <div

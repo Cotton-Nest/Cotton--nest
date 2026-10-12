@@ -70,6 +70,130 @@ export async function getAllImagesFromFirestore(): Promise<Record<string, string
   }
 }
 
+export async function deleteImageFromFirestore(productId: string): Promise<void> {
+  try {
+    const docRef = doc(db, 'custom_images', productId);
+    await deleteDoc(docRef);
+  } catch (err) {
+    console.warn('Failed to delete image from Firestore:', err);
+  }
+}
+
+/* ---------------- FIRESTORE REAL-TIME SUBSCRIPTIONS ---------------- */
+
+// Real-time listener for Products: Fires INSTANTLY on all devices when PC makes an update
+export function subscribeToProductsFromFirestore(
+  onUpdate: (products: BedsheetProduct[]) => void
+): () => void {
+  try {
+    const colRef = collection(db, 'products');
+    const unsubscribe = onSnapshot(
+      colRef,
+      (snap) => {
+        if (!snap.empty) {
+          const items: BedsheetProduct[] = [];
+          snap.forEach((d) => {
+            const data = d.data() as BedsheetProduct;
+            if (data && data.id) {
+              items.push(data);
+            }
+          });
+          if (items.length > 0) {
+            onUpdate(items);
+          }
+        }
+      },
+      (err) => {
+        console.warn('Real-time products subscription warning:', err);
+      }
+    );
+    return unsubscribe;
+  } catch (err) {
+    console.warn('Failed to subscribe to products in Firestore:', err);
+    return () => {};
+  }
+}
+
+// Real-time listener for Custom Photos: Fires INSTANTLY on all devices when a photo is uploaded
+export function subscribeToImagesFromFirestore(
+  onUpdate: (images: Record<string, string>) => void
+): () => void {
+  try {
+    const colRef = collection(db, 'custom_images');
+    const unsubscribe = onSnapshot(
+      colRef,
+      (snap) => {
+        const result: Record<string, string> = {};
+        snap.forEach((d) => {
+          const data = d.data();
+          if (data && data.imageUrl) {
+            result[d.id] = data.imageUrl;
+          }
+        });
+        onUpdate(result);
+      },
+      (err) => {
+        console.warn('Real-time images subscription warning:', err);
+      }
+    );
+    return unsubscribe;
+  } catch (err) {
+    console.warn('Failed to subscribe to custom images in Firestore:', err);
+    return () => {};
+  }
+}
+
+// Real-time listener for Site Content & Announcements
+export function subscribeToSiteContentFromFirestore(
+  onUpdate: (content: SiteContent) => void
+): () => void {
+  try {
+    const docRef = doc(db, 'site_content', 'main');
+    const unsubscribe = onSnapshot(
+      docRef,
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data() as SiteContent;
+          if (data) onUpdate(data);
+        }
+      },
+      (err) => {
+        console.warn('Real-time site content subscription warning:', err);
+      }
+    );
+    return unsubscribe;
+  } catch (err) {
+    console.warn('Failed to subscribe to site content in Firestore:', err);
+    return () => {};
+  }
+}
+
+// Real-time listener for Orders
+export function subscribeToOrdersFromFirestore(
+  onUpdate: (orders: Order[]) => void
+): () => void {
+  try {
+    const colRef = collection(db, 'orders');
+    const unsubscribe = onSnapshot(
+      colRef,
+      (snap) => {
+        const items: Order[] = [];
+        snap.forEach((d) => {
+          items.push(d.data() as Order);
+        });
+        onUpdate(items);
+      },
+      (err) => {
+        console.warn('Real-time orders subscription warning:', err);
+      }
+    );
+    return unsubscribe;
+  } catch (err) {
+    console.warn('Failed to subscribe to orders in Firestore:', err);
+    return () => {};
+  }
+}
+
 // Quota circuit-breaker: if Google Cloud Firestore free daily quota is exceeded,
 // back off temporarily so client operations (IndexedDB & server DB) are fast and uninterrupted
 function getInitialQuotaExhaustedUntil(): number {

@@ -1,5 +1,6 @@
 import React from 'react';
 import { MapPin, Phone, MessageCircle, Clock, Navigation, CheckCircle2, Send } from 'lucide-react';
+import { motion } from 'motion/react';
 import { COMPANY_DETAILS } from '../data/products';
 
 export const StoreLocation: React.FC = () => {
@@ -20,8 +21,14 @@ export const StoreLocation: React.FC = () => {
     <section id="store-location" className="py-12 sm:py-16 bg-[#F4EFE6]/60 border-t border-[#EAE2D5]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         
-        {/* Section Header */}
-        <div className="text-center max-w-2xl mx-auto mb-10 space-y-2">
+        {/* Section Header with Scroll Reveal */}
+        <motion.div
+          initial={{ opacity: 0, y: 25 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: '-50px' }}
+          transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+          className="text-center max-w-2xl mx-auto mb-10 space-y-2"
+        >
           <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#A8823B] uppercase tracking-wider">
             <MapPin className="w-3.5 h-3.5 text-[#C29E57]" />
             Flagship Experience Studio
@@ -33,12 +40,18 @@ export const StoreLocation: React.FC = () => {
             Prefer feeling the texture and softness before buying? 
             Visit our studio at Sector 46 or request a video walkthrough.
           </p>
-        </div>
+        </motion.div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           
           {/* Left Column: Direct Address & Contact Information Cards */}
-          <div className="lg:col-span-7 space-y-6">
+          <motion.div
+            initial={{ opacity: 0, y: 30 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, margin: '-50px' }}
+            transition={{ duration: 0.65, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
+            className="lg:col-span-7 space-y-6"
+          >
             
             {/* Main Physical Address Card */}
             <div className="bg-[#FAF7F2] p-6 sm:p-7 rounded-2xl border border-[#EAE2D5] shadow-xs space-y-5">
@@ -134,10 +147,16 @@ export const StoreLocation: React.FC = () => {
 
             </div>
 
-          </div>
+          </motion.div>
 
           {/* Right Column: Book a Studio Visit or WhatsApp Swatch Request */}
-          <div className="lg:col-span-5">
+          <motion.div
+            initial={{ opacity: 0, y: 30 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, margin: '-50px' }}
+            transition={{ duration: 0.65, delay: 0.25, ease: [0.22, 1, 0.36, 1] }}
+            className="lg:col-span-5"
+          >
             <div className="bg-[#FAF7F2] p-6 sm:p-7 rounded-2xl border border-[#EAE2D5] shadow-xs space-y-4">
               
               <div>
@@ -219,7 +238,7 @@ export const StoreLocation: React.FC = () => {
               </div>
 
             </div>
-          </div>
+          </motion.div>
 
         </div>
 

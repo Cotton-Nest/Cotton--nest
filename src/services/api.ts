@@ -27,45 +27,35 @@ import {
   saveSiteContentToFirestore
 } from '../firebase';
 
-// Upload Image API: Compresses image and persists directly to Firestore and IndexedDB
+// Upload Image API: Compresses image and persists directly to Firebase Firestore and IndexedDB
 export async function uploadImageApi(imageInput: string | File, productId?: string): Promise<string> {
   try {
     // If it's already an existing data URL or remote URL, use as is
     if (typeof imageInput === 'string' && (imageInput.startsWith('data:image/') || imageInput.startsWith('http://') || imageInput.startsWith('https://'))) {
       if (productId) {
-        saveImageToFirestore(productId, imageInput);
+        saveImageToFirestore(productId, imageInput).catch(() => {});
+        savePersistentImage(productId, imageInput).catch(() => {});
       }
       return imageInput;
     }
 
     // 1. Compress image client-side to lightweight JPEG (~70KB-120KB)
-    // Storing the self-contained data URL ensures photos NEVER 404 when server containers restart!
+    // Storing the self-contained data URL ensures photos NEVER 404 across devices, phones, or server restarts!
     const compressed = await compressImage(imageInput, 1280, 1280, 0.82);
 
-    // 2. Also send to server for disk copy
-    try {
-      const res = await fetch('/api/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: compressed }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.url) {
-          if (productId) {
-            saveImageToFirestore(productId, data.url);
-            savePersistentImage(productId, data.url).catch(() => {});
-          }
-          return data.url;
-        }
-      }
-    } catch {}
-
-    // 3. Fallback: store permanently in Google Cloud Firestore & IndexedDB
+    // 2. Primary cloud storage: Store permanently in Google Cloud Firestore & IndexedDB
+    // Giving strict preference to Firebase ensures all devices receive this photo instantly
     if (productId && compressed) {
-      saveImageToFirestore(productId, compressed);
+      saveImageToFirestore(productId, compressed).catch(() => {});
       savePersistentImage(productId, compressed).catch(() => {});
     }
+
+    // 3. Background server disk backup copy (non-blocking)
+    fetch('/api/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: compressed }),
+    }).catch(() => {});
 
     return compressed;
   } catch (err) {
@@ -75,9 +65,10 @@ export async function uploadImageApi(imageInput: string | File, productId?: stri
   }
 }
 
-// Products API: Loads directly from Google Cloud Firestore (permanent cloud database)
+// Products API: Loads authoritative data giving direct preference to Google Cloud Firestore
 export async function getProducts(): Promise<BedsheetProduct[]> {
   // 1. Gather all persistent custom photos (Firestore Cloud + Local IndexedDB)
+  // Firebase Firestore is strictly preferred over local device cache
   let persistentImages: Record<string, string> = {};
   try {
     const [localImgs, cloudImgs] = await Promise.all([
@@ -87,7 +78,7 @@ export async function getProducts(): Promise<BedsheetProduct[]> {
     persistentImages = { ...localImgs, ...cloudImgs };
   } catch {}
 
-  // 2. Read local cache from BOTH localStorage AND IndexedDB
+  // 2. Read local cache from BOTH localStorage AND IndexedDB (as fallback)
   const localSaved = localStorage.getItem('cotton_nest_products');
   let localTimestamp = Number(localStorage.getItem('cotton_nest_products_updated_at') || 0);
   let localProducts: BedsheetProduct[] | null = null;
@@ -114,98 +105,107 @@ export async function getProducts(): Promise<BedsheetProduct[]> {
     }
   } catch {}
 
-  // Select the freshest local dataset
+  // Select freshest local dataset
   if (idbProducts && (!localProducts || idbTimestamp >= localTimestamp)) {
     localProducts = idbProducts;
     localTimestamp = Math.max(localTimestamp, idbTimestamp);
   }
 
-  // 3. Primary Source: Google Cloud Firestore (Permanent cloud database that never resets)
-  try {
-    const cloudProducts = await getProductsFromFirestore();
-    if (cloudProducts && cloudProducts.length > 0) {
-      const cloudTimestamp = Math.max(...cloudProducts.map((p: any) => p.updatedAt || 0), 0);
+  // 3. Fetch BOTH Central Backend Server API AND Google Cloud Firestore in parallel
+  const [serverRes, cloudProducts] = await Promise.allSettled([
+    fetch('/api/products').then((r) => (r.ok ? r.json() : null)),
+    getProductsFromFirestore(),
+  ]);
 
-      // If local edits were made more recently, keep local and sync to cloud
-      if (localProducts && localProducts.length > 0 && localTimestamp > cloudTimestamp + 2000) {
-        saveAllProductsToFirestore(localProducts).catch(() => {});
-        fetch('/api/products', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(localProducts),
-        }).catch(() => {});
+  const serverProducts: BedsheetProduct[] | null =
+    serverRes.status === 'fulfilled' && Array.isArray(serverRes.value) && serverRes.value.length > 0
+      ? serverRes.value
+      : null;
 
-        return localProducts.map((p) => {
-          const rawImg = persistentImages[p.id] || p.image;
-          return { ...p, image: resolveBedsheetImage(rawImg, p.id) };
-        });
-      }
+  const validCloudProducts: BedsheetProduct[] | null =
+    cloudProducts.status === 'fulfilled' && Array.isArray(cloudProducts.value) && cloudProducts.value.length > 0
+      ? cloudProducts.value
+      : null;
 
-      // Cloud Firestore is authoritative
-      const orderMap = new Map(BEDSHEETS_CATALOG.map((p, idx) => [p.id, idx]));
-      cloudProducts.sort((a, b) => {
-        const orderA = typeof (a as any).order === 'number' ? (a as any).order : (orderMap.get(a.id) ?? 999);
-        const orderB = typeof (b as any).order === 'number' ? (b as any).order : (orderMap.get(b.id) ?? 999);
-        return orderA - orderB;
-      });
-
-      const merged = cloudProducts.map((p) => {
-        const rawImg = persistentImages[p.id] || p.image;
-        return { ...p, image: resolveBedsheetImage(rawImg, p.id) };
-      });
-
-      // Cache locally
-      try {
-        const lightweight = merged.map((p) => (p.image?.startsWith('data:') ? { ...p, image: `/photo/${p.id}.jpg` } : p));
-        localStorage.setItem('cotton_nest_products', JSON.stringify(lightweight));
-        localStorage.setItem('cotton_nest_products_updated_at', String(cloudTimestamp || Date.now()));
-      } catch {}
-      savePersistentProducts(merged, cloudTimestamp || Date.now()).catch(() => {});
-
-      // Keep backend server disk in sync as secondary replica
-      fetch('/api/products', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(merged),
-      }).catch(() => {});
-
-      return merged;
-    }
-  } catch (err) {
-    console.warn('Firestore fetch failed, checking local & server backups:', err);
+  // 4. GIVE STRICT PREFERENCE TO FIREBASE FIRESTORE!
+  // If Firestore has products, it is the authoritative cloud database across all devices.
+  let authoritativeRemote: BedsheetProduct[] | null = null;
+  if (validCloudProducts && validCloudProducts.length > 0) {
+    authoritativeRemote = validCloudProducts;
+  } else if (serverProducts && serverProducts.length > 0) {
+    authoritativeRemote = serverProducts;
   }
 
-  // 4. Secondary: Local Storage / IndexedDB (Instant client cache)
-  if (localProducts && localProducts.length > 0) {
-    const merged = localProducts.map((p) => {
-      const rawImg = persistentImages[p.id] || p.image;
-      return { ...p, image: resolveBedsheetImage(rawImg, p.id) };
+  const remoteTimestamp = authoritativeRemote
+    ? Math.max(...authoritativeRemote.map((p) => p.updatedAt || 0), 0)
+    : 0;
+
+  // 5. Cross-device synchronization logic:
+  // If remote dataset exists, REMOTE IS AUTHORITATIVE!
+  if (authoritativeRemote && authoritativeRemote.length > 0) {
+    // If local was edited on this specific device strictly more recently (by > 2s), preserve local and broadcast
+    if (localProducts && localProducts.length > 0 && localTimestamp > remoteTimestamp + 2000) {
+      saveAllProducts(localProducts).catch(() => {});
+      return localProducts.map((p) => ({
+        ...p,
+        image: resolveBedsheetImage(p.image, p.id, p.updatedAt),
+      }));
+    }
+
+    // Remote dataset wins! Keep order consistent
+    const orderMap = new Map(BEDSHEETS_CATALOG.map((p, idx) => [p.id, idx]));
+    authoritativeRemote.sort((a, b) => {
+      const orderA = typeof (a as any).order === 'number' ? (a as any).order : (orderMap.get(a.id) ?? 999);
+      const orderB = typeof (b as any).order === 'number' ? (b as any).order : (orderMap.get(b.id) ?? 999);
+      return orderA - orderB;
     });
-    return merged;
-  }
 
-  // 5. Tertiary: Backend Server API disk cache
-  try {
-    const res = await fetch('/api/products');
-    if (res.ok) {
-      const serverData = await res.json();
-      if (Array.isArray(serverData) && serverData.length > 0) {
-        const merged = serverData.map((p: BedsheetProduct) => {
-          const rawImg = persistentImages[p.id] || p.image;
-          return { ...p, image: resolveBedsheetImage(rawImg, p.id) };
-        });
-        return merged;
+    const cleanMerged = authoritativeRemote.map((p) => {
+      // The product's own image from the server is authoritative!
+      // Only fall back to persistentImages if p.image is missing or empty
+      const finalPhoto = p.image || persistentImages[p.id];
+      return {
+        ...p,
+        image: resolveBedsheetImage(finalPhoto, p.id, p.updatedAt),
+      };
+    });
+
+    // Update local cache so this device stays synced with PC edits
+    try {
+      const lightweight = cleanMerged.map((p) =>
+        p.image?.startsWith('data:') ? { ...p, image: `/photo/${p.id}.jpg` } : p
+      );
+      localStorage.setItem('cotton_nest_products', JSON.stringify(lightweight));
+      localStorage.setItem('cotton_nest_products_updated_at', String(remoteTimestamp || Date.now()));
+    } catch {}
+
+    savePersistentProducts(cleanMerged, remoteTimestamp || Date.now()).catch(() => {});
+
+    // Sync persistent images store so other components find the latest photo
+    cleanMerged.forEach((p) => {
+      if (p.image && !p.image.startsWith('/images/exact_sheet')) {
+        savePersistentImage(p.id, p.image).catch(() => {});
       }
-    }
-  } catch (err) {
-    console.warn('Backend fetch failed, falling back to base catalog:', err);
+    });
+
+    return cleanMerged;
   }
 
-  // 6. Absolute initial fallback: BEDSHEETS_CATALOG with base timestamp (never synthetic Date.now())
-  return BEDSHEETS_CATALOG.map((p, idx) => {
-    const rawImg = persistentImages[p.id] || p.image;
-    return { ...p, order: idx, image: resolveBedsheetImage(rawImg, p.id), updatedAt: 1 };
-  });
+  // 6. Secondary: Local Storage / IndexedDB (when completely offline)
+  if (localProducts && localProducts.length > 0) {
+    return localProducts.map((p) => ({
+      ...p,
+      image: resolveBedsheetImage(p.image, p.id, p.updatedAt),
+    }));
+  }
+
+  // 7. Absolute initial fallback: default catalog
+  return BEDSHEETS_CATALOG.map((p, idx) => ({
+    ...p,
+    order: idx,
+    image: resolveBedsheetImage(p.image, p.id),
+    updatedAt: 1,
+  }));
 }
 
 export async function saveAllProducts(products: BedsheetProduct[]): Promise<void> {

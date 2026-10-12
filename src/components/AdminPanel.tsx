@@ -341,7 +341,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       const serverUrl = await uploadImageApi(file, productId);
       onUploadImage(productId, serverUrl);
       const updated = editableProducts.map((p) => {
-        if (p.id === productId) return { ...p, image: serverUrl };
+        if (p.id === productId) return { ...p, image: serverUrl, updatedAt: Date.now() };
         return p;
       });
       setEditableProducts(updated);
@@ -424,6 +424,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         if (p.id === productId && p.variants) {
           return {
             ...p,
+            updatedAt: Date.now(),
             variants: p.variants.map((v) => (v.id === variantId ? { ...v, image: serverUrl } : v)),
           };
         }
@@ -1060,7 +1061,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             {/* Product Cards List */}
             <section className="space-y-4">
               {filteredProducts.map((product, idx) => {
-                const currentImg = customImages[product.id] || product.image;
+                const currentImg = product.image || customImages[product.id];
                 const discountPct = Math.max(
                   0,
                   Math.round(

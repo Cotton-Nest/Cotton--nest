@@ -88,14 +88,38 @@ async function startServer() {
     fs.mkdirSync(IMAGES_DIR, { recursive: true });
   }
 
-  // Serve uploaded and static images statically with multi-path resolution
-  app.use('/uploads', express.static(UPLOADS_DIR));
-  app.use('/images', express.static(IMAGES_DIR));
+  // Serve uploaded and static images with no-cache revalidation so devices never get stuck on stale photos
+  app.use(
+    '/uploads',
+    express.static(UPLOADS_DIR, {
+      setHeaders: (res) => {
+        res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+      },
+    })
+  );
+  app.use(
+    '/images',
+    express.static(IMAGES_DIR, {
+      setHeaders: (res) => {
+        res.setHeader('Cache-Control', 'public, max-age=3600');
+      },
+    })
+  );
   app.use('/images', express.static(path.join(__dirname, 'dist', 'images')));
   app.use('/src/assets/images', express.static(IMAGES_DIR));
   app.use('/src/assets/images', express.static(path.join(__dirname, 'src', 'assets', 'images')));
 
-  // Dedicated JPG Photo Endpoint: ALWAYS returns a real JPEG image with proper headers
+  // Fast cross-device sync-check endpoint so phone/tablets know within seconds when PC made edits
+  app.get('/api/sync-check', (_req, res) => {
+    const latestTimestamp = Math.max(...db.products.map((p) => p.updatedAt || 0), 0);
+    res.json({
+      timestamp: latestTimestamp,
+      productCount: db.products.length,
+      ordersCount: db.orders.length,
+    });
+  });
+
+  // Dedicated JPG Photo Endpoint: ALWAYS returns fresh JPEG with proper no-cache revalidation
   app.get(['/photo/:id', '/photo/:id.jpg'], (req, res) => {
     let id = req.params.id || '';
     if (id.endsWith('.jpg')) {
@@ -120,7 +144,7 @@ async function startServer() {
         const fullPath = path.join(dir, fn);
         if (fs.existsSync(fullPath) && fs.statSync(fullPath).isFile()) {
           res.setHeader('Content-Type', fn.endsWith('.png') ? 'image/png' : 'image/jpeg');
-          res.setHeader('Cache-Control', 'public, max-age=86400');
+          res.setHeader('Cache-Control', 'no-cache, must-revalidate');
           return res.sendFile(fullPath);
         }
       }
@@ -134,7 +158,7 @@ async function startServer() {
         const fullPath = path.join(dir, imgPath);
         if (fs.existsSync(fullPath)) {
           res.setHeader('Content-Type', 'image/jpeg');
-          res.setHeader('Cache-Control', 'public, max-age=86400');
+          res.setHeader('Cache-Control', 'no-cache, must-revalidate');
           return res.sendFile(fullPath);
         }
       }
@@ -144,6 +168,7 @@ async function startServer() {
     const defaultSheet = path.join(__dirname, 'public', 'images', 'exact_sheet1_pink_rose_1790997736396.jpg');
     if (fs.existsSync(defaultSheet)) {
       res.setHeader('Content-Type', 'image/jpeg');
+      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
       return res.sendFile(defaultSheet);
     }
 

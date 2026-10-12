@@ -16,7 +16,7 @@ export const PRODUCT_DEFAULT_IMAGES: Record<string, string> = {
  * Resolves any bedsheet image path to a valid, working URL or data URL.
  * Automatically recovers missing or dead /uploads/ paths to each product's specific catalog photography.
  */
-export function resolveBedsheetImage(src?: string | null, productId?: string): string {
+export function resolveBedsheetImage(src?: string | null, productId?: string, updatedAt?: number): string {
   const fallback = (productId && PRODUCT_DEFAULT_IMAGES[productId]) || DEFAULT_SHEET_IMAGE;
 
   if (!src || typeof src !== 'string' || src.trim() === '') {
@@ -35,28 +35,26 @@ export function resolveBedsheetImage(src?: string | null, productId?: string): s
     return trimmed;
   }
 
+  let finalUrl = trimmed;
   if (trimmed.startsWith('/uploads/')) {
-    return trimmed;
-  }
-  if (trimmed.startsWith('uploads/')) {
-    return `/${trimmed}`;
-  }
-
-  // Normalize legacy development path to public path
-  if (trimmed.startsWith('/src/assets/images/')) {
-    return trimmed.replace('/src/assets/images/', '/images/');
-  }
-
-  // Handle relative paths without leading slash
-  if (trimmed.startsWith('images/')) {
-    return `/${trimmed}`;
+    finalUrl = trimmed;
+  } else if (trimmed.startsWith('uploads/')) {
+    finalUrl = `/${trimmed}`;
+  } else if (trimmed.startsWith('/src/assets/images/')) {
+    finalUrl = trimmed.replace('/src/assets/images/', '/images/');
+  } else if (trimmed.startsWith('images/')) {
+    finalUrl = `/${trimmed}`;
+  } else if (!trimmed.startsWith('/') && !trimmed.startsWith('http')) {
+    finalUrl = `/images/${trimmed}`;
   }
 
-  if (!trimmed.startsWith('/') && !trimmed.startsWith('http')) {
-    return `/images/${trimmed}`;
+  // If updatedAt timestamp is provided and it is a relative static asset, add cache buster query
+  if (updatedAt && (finalUrl.startsWith('/uploads/') || finalUrl.startsWith('/photo/'))) {
+    const separator = finalUrl.includes('?') ? '&' : '?';
+    return `${finalUrl}${separator}v=${updatedAt}`;
   }
 
-  return trimmed;
+  return finalUrl;
 }
 
 export function handleImageFallback(e: React.SyntheticEvent<HTMLImageElement, Event>, productId?: string) {

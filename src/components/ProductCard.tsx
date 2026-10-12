@@ -35,7 +35,8 @@ export const ProductCard: React.FC<ProductCardProps> = ({
     ? product.variants?.find((v) => v.id === selectedVariantId)
     : undefined;
 
-  const displayImage = resolveBedsheetImage(activeVariant?.image || customImage || product.image, product.id);
+  const rawImage = activeVariant?.image || product.image || customImage;
+  const displayImage = resolveBedsheetImage(rawImage, product.id, product.updatedAt);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
