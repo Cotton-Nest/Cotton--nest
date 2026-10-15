@@ -111,6 +111,9 @@ async function startServer() {
 
   // Fast cross-device sync-check endpoint so phone/tablets know within seconds when PC made edits
   app.get('/api/sync-check', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     const latestTimestamp = Math.max(...db.products.map((p) => p.updatedAt || 0), 0);
     res.json({
       timestamp: latestTimestamp,
@@ -219,6 +222,9 @@ async function startServer() {
 
   // Products API
   app.get('/api/products', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     try {
       if (fs.existsSync(DB_FILE)) {
         const raw = fs.readFileSync(DB_FILE, 'utf-8');

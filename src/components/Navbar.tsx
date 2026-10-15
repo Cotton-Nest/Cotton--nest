@@ -176,7 +176,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           <div className="flex items-center gap-2 sm:gap-3">
             
             {/* Owner Exclusive Controls */}
-            {isOwnerMode && (
+            {isOwnerMode ? (
               <>
                 {onOpenAdmin && (
                   <button
@@ -201,6 +201,18 @@ export const Navbar: React.FC<NavbarProps> = ({
                   </button>
                 )}
               </>
+            ) : (
+              onOpenAdmin && (
+                <button
+                  type="button"
+                  onClick={onOpenAdmin}
+                  className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-[#6B5D55] hover:text-[#8C2E46] bg-white hover:bg-[#FDEAF0] border border-[#EAE2D5] hover:border-[#FAD1DC] rounded-lg transition-colors cursor-pointer shadow-2xs"
+                  title="Store Owner Access / Edit Mode (PIN: 2508)"
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5 text-[#8C2E46]" />
+                  <span>Owner Edit</span>
+                </button>
+              )
             )}
 
             {/* Google Sign In / User Profile Button */}
@@ -398,7 +410,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
             )}
 
-            {isOwnerMode && (
+            {isOwnerMode ? (
               <>
                 {onOpenPhotoManager && (
                   <button
@@ -431,6 +443,25 @@ export const Navbar: React.FC<NavbarProps> = ({
                   </button>
                 )}
               </>
+            ) : (
+              onOpenAdmin && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    onOpenAdmin();
+                  }}
+                  className="w-full text-left px-3 py-2.5 rounded-lg text-sm font-semibold text-[#8C2E46] bg-[#FDEAF0] border border-[#FAD1DC] flex items-center justify-between cursor-pointer"
+                >
+                  <span className="flex items-center gap-2">
+                    <SlidersHorizontal className="w-4 h-4 text-[#8C2E46]" />
+                    Store Owner Login / Edit Mode
+                  </span>
+                  <span className="text-[10px] bg-[#FAF7F2] text-[#8C2E46] px-2 py-0.5 rounded border border-[#F9D3DE] font-bold">
+                    PIN: 2508
+                  </span>
+                </button>
+              )
             )}
 
             <div className="pt-3 border-t border-[#EAE2D5] flex items-center gap-3">

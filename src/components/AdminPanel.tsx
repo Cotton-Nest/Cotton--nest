@@ -818,7 +818,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 }
                 onUpdateProducts(latestProductsRef.current);
                 setSaveStatus('saved');
-                showToast('✅ All bedsheet changes permanently saved to database!');
+                showToast('✅ All changes permanently saved to Firebase Firestore!');
               }}
               className="px-3.5 py-1.5 bg-[#8C2E46] hover:bg-[#732438] text-white text-xs font-semibold rounded-xl transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs"
               title="Force save all product details permanently"

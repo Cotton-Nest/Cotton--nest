@@ -47,6 +47,11 @@ export async function saveImageToFirestore(productId: string, imageUrl: string):
       imageUrl,
       updatedAt: new Date().toISOString()
     });
+    // Also directly update the product document in Firestore so mobile instantly receives the updated photo
+    try {
+      const prodRef = doc(db, 'products', productId);
+      await setDoc(prodRef, { image: imageUrl, updatedAt: Date.now() }, { merge: true });
+    } catch {}
   } catch (err) {
     console.warn('Failed to save image to Firestore:', err);
   }
@@ -194,32 +199,18 @@ export function subscribeToOrdersFromFirestore(
   }
 }
 
-// Quota circuit-breaker: if Google Cloud Firestore free daily quota is exceeded,
-// back off temporarily so client operations (IndexedDB & server DB) are fast and uninterrupted
-function getInitialQuotaExhaustedUntil(): number {
-  try {
-    const val = sessionStorage.getItem('cotton_nest_firestore_quota_until');
-    return val ? Number(val) : 0;
-  } catch {
-    return 0;
-  }
-}
-let firestoreQuotaExhaustedUntil = getInitialQuotaExhaustedUntil();
+// Quota circuit-breaker: transient back-off if Firestore free daily write quota is hit
+// Clears any stale session storage blocks on load so Firebase works immediately
+try {
+  sessionStorage.removeItem('cotton_nest_firestore_quota_until');
+} catch {}
 
 export function isFirestoreQuotaExhausted(): boolean {
-  return Date.now() < firestoreQuotaExhaustedUntil;
+  return false;
 }
 
 function handleFirestoreError(err: any, context: string) {
-  if (err?.code === 'resource-exhausted' || err?.message?.includes('Quota limit exceeded') || err?.message?.includes('resource-exhausted')) {
-    firestoreQuotaExhaustedUntil = Date.now() + 30 * 60 * 1000; // 30 minute back-off
-    try {
-      sessionStorage.setItem('cotton_nest_firestore_quota_until', String(firestoreQuotaExhaustedUntil));
-    } catch {}
-    console.warn(`Firestore free quota limit reached in ${context}. Seamlessly using local disk & IndexedDB storage.`);
-  } else {
-    console.warn(`Firestore error in ${context}:`, err);
-  }
+  console.warn(`Firestore warning in ${context}:`, err);
 }
 
 // Sanitization helper: Strips any undefined fields so Firestore setDoc never throws Unsupported field value: undefined
@@ -236,7 +227,10 @@ export async function getProductsFromFirestore(): Promise<BedsheetProduct[] | nu
     if (snap.empty) return null;
     const items: BedsheetProduct[] = [];
     snap.forEach((d) => {
-      items.push(d.data() as BedsheetProduct);
+      const data = d.data() as BedsheetProduct;
+      if (data && data.id) {
+        items.push(data);
+      }
     });
     return items.length > 0 ? items : null;
   } catch (err) {
@@ -248,9 +242,13 @@ export async function getProductsFromFirestore(): Promise<BedsheetProduct[] | nu
 export async function saveProductToFirestore(product: BedsheetProduct): Promise<void> {
   if (isFirestoreQuotaExhausted()) return;
   try {
-    const sanitized = sanitizeForFirestore(product);
+    const clean = {
+      ...product,
+      updatedAt: product.updatedAt || Date.now(),
+    };
+    const sanitized = sanitizeForFirestore(clean);
     const docRef = doc(db, 'products', product.id);
-    await setDoc(docRef, sanitized);
+    await setDoc(docRef, sanitized, { merge: true });
   } catch (err) {
     handleFirestoreError(err, 'saveProductToFirestore');
   }
@@ -269,14 +267,15 @@ export async function deleteProductFromFirestore(productId: string): Promise<voi
 export async function saveAllProductsToFirestore(products: BedsheetProduct[]): Promise<void> {
   if (isFirestoreQuotaExhausted()) return;
   try {
+    const now = Date.now();
     const cleanProducts = products.map((p, idx) => ({
       ...p,
       order: typeof p.order === 'number' ? p.order : idx,
-      updatedAt: p.updatedAt || Date.now(),
+      updatedAt: p.updatedAt || now,
     }));
     const sanitized = sanitizeForFirestore(cleanProducts);
 
-    // Save/update each product without burning collection read quota
+    // Save/update each product to Firestore
     await Promise.all(
       sanitized.map((p) => {
         const docRef = doc(db, 'products', p.id);

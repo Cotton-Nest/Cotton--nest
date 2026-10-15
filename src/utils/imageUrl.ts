@@ -35,6 +35,11 @@ export function resolveBedsheetImage(src?: string | null, productId?: string, up
     return trimmed;
   }
 
+  // Discard dead temporary session uploads
+  if (trimmed.includes('/uploads/sheet_') || trimmed.includes('uploads/sheet_')) {
+    return fallback;
+  }
+
   let finalUrl = trimmed;
   if (trimmed.startsWith('/uploads/')) {
     finalUrl = trimmed;

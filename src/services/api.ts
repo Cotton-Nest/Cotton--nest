@@ -27,6 +27,17 @@ import {
   saveSiteContentToFirestore
 } from '../firebase';
 
+// Direct Firebase Store scratch helpers
+export {
+  fetchProductsFromFirestore,
+  fetchCustomImagesFromFirestore,
+  uploadAndSaveProductImage,
+  saveProductDetailsToFirestore,
+  saveAllProductsToFirestoreService,
+  deleteProductFromFirestoreService,
+  subscribeToProductsRealtime
+} from './firebaseStore';
+
 // Upload Image API: Compresses image and persists directly to Firebase Firestore and IndexedDB
 export async function uploadImageApi(imageInput: string | File, productId?: string): Promise<string> {
   try {
@@ -46,7 +57,7 @@ export async function uploadImageApi(imageInput: string | File, productId?: stri
     // 2. Primary cloud storage: Store permanently in Google Cloud Firestore & IndexedDB
     // Giving strict preference to Firebase ensures all devices receive this photo instantly
     if (productId && compressed) {
-      saveImageToFirestore(productId, compressed).catch(() => {});
+      await saveImageToFirestore(productId, compressed).catch(() => {});
       savePersistentImage(productId, compressed).catch(() => {});
     }
 
@@ -112,8 +123,9 @@ export async function getProducts(): Promise<BedsheetProduct[]> {
   }
 
   // 3. Fetch BOTH Central Backend Server API AND Google Cloud Firestore in parallel
+  // 3. Fetch BOTH Central Backend Server API AND Google Cloud Firestore in parallel with cache-busting
   const [serverRes, cloudProducts] = await Promise.allSettled([
-    fetch('/api/products').then((r) => (r.ok ? r.json() : null)),
+    fetch(`/api/products?t=${Date.now()}`, { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)),
     getProductsFromFirestore(),
   ]);
 
@@ -127,13 +139,27 @@ export async function getProducts(): Promise<BedsheetProduct[]> {
       ? cloudProducts.value
       : null;
 
-  // 4. GIVE STRICT PREFERENCE TO FIREBASE FIRESTORE!
-  // If Firestore has products, it is the authoritative cloud database across all devices.
+  const serverTime = serverProducts && serverProducts.length > 0
+    ? Math.max(...serverProducts.map((p) => p.updatedAt || 0), 0)
+    : 0;
+
+  const cloudTime = validCloudProducts && validCloudProducts.length > 0
+    ? Math.max(...validCloudProducts.map((p) => p.updatedAt || 0), 0)
+    : 0;
+
+  // 4. Determine authoritative dataset: Firebase Firestore is given primary preference!
   let authoritativeRemote: BedsheetProduct[] | null = null;
   if (validCloudProducts && validCloudProducts.length > 0) {
-    authoritativeRemote = validCloudProducts;
+    // If local server has newer offline changes, propagate them up to Firebase Firestore
+    if (serverProducts && serverProducts.length > 0 && serverTime > cloudTime) {
+      authoritativeRemote = serverProducts;
+      saveAllProductsToFirestore(serverProducts).catch(() => {});
+    } else {
+      authoritativeRemote = validCloudProducts;
+    }
   } else if (serverProducts && serverProducts.length > 0) {
     authoritativeRemote = serverProducts;
+    saveAllProductsToFirestore(serverProducts).catch(() => {});
   }
 
   const remoteTimestamp = authoritativeRemote
@@ -143,8 +169,8 @@ export async function getProducts(): Promise<BedsheetProduct[]> {
   // 5. Cross-device synchronization logic:
   // If remote dataset exists, REMOTE IS AUTHORITATIVE!
   if (authoritativeRemote && authoritativeRemote.length > 0) {
-    // If local was edited on this specific device strictly more recently (by > 2s), preserve local and broadcast
-    if (localProducts && localProducts.length > 0 && localTimestamp > remoteTimestamp + 2000) {
+    const isOwnerDevice = typeof window !== 'undefined' && localStorage.getItem('cotton_nest_owner_mode') === 'true';
+    if (isOwnerDevice && localProducts && localProducts.length > 0 && localTimestamp > remoteTimestamp + 2000) {
       saveAllProducts(localProducts).catch(() => {});
       return localProducts.map((p) => ({
         ...p,
@@ -161,8 +187,6 @@ export async function getProducts(): Promise<BedsheetProduct[]> {
     });
 
     const cleanMerged = authoritativeRemote.map((p) => {
-      // The product's own image from the server is authoritative!
-      // Only fall back to persistentImages if p.image is missing or empty
       const finalPhoto = p.image || persistentImages[p.id];
       return {
         ...p,
@@ -217,35 +241,22 @@ export async function saveAllProducts(products: BedsheetProduct[]): Promise<void
     updatedAt: saveTimestamp,
   }));
 
-  // Clean lightweight version for localStorage (prevents quota exceeded error)
-  const lightweightProducts = orderedProducts.map((p) => {
-    let cleanImage = p.image;
-    if (cleanImage && cleanImage.startsWith('data:image/')) {
-      cleanImage = `/photo/${p.id}.jpg`;
-    }
-    const cleanVariants = p.variants?.map((v) => {
-      if (v.image && v.image.startsWith('data:image/')) {
-        return { ...v, image: `/photo/${v.id || p.id}.jpg` };
-      }
-      return v;
-    });
-    return {
-      ...p,
-      image: cleanImage,
-      variants: cleanVariants,
-    };
-  });
-
-  // 1. Synchronous localStorage save with lightweight payload (never exceeds 20KB quota)
+  // 1. Synchronous localStorage cache save
   try {
-    localStorage.setItem('cotton_nest_products', JSON.stringify(lightweightProducts));
+    localStorage.setItem('cotton_nest_products', JSON.stringify(orderedProducts));
     localStorage.setItem('cotton_nest_products_updated_at', String(saveTimestamp));
   } catch (err) {
     console.warn('LocalStorage save failed:', err);
   }
 
-  // 2. Parallel saves to IndexedDB (permanent client DB) and Backend Server (authoritative disk DB),
-  // with non-blocking Firestore cloud sync
+  // 2. Primary: Persist immediately to Firebase Firestore so mobile website updates in real-time
+  try {
+    await saveAllProductsToFirestore(orderedProducts);
+  } catch (err) {
+    console.warn('Firestore primary sync warning:', err);
+  }
+
+  // 3. Mirror to IndexedDB and local backend server disk DB
   await Promise.allSettled([
     savePersistentProducts(orderedProducts, saveTimestamp),
     fetch('/api/products', {
@@ -253,12 +264,11 @@ export async function saveAllProducts(products: BedsheetProduct[]): Promise<void
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(orderedProducts),
     }).catch((err) => console.warn('Server sync warning:', err)),
-    saveAllProductsToFirestore(orderedProducts).catch((err) => console.warn('Firestore sync warning:', err)),
   ]);
 }
 
 export async function addProduct(product: BedsheetProduct): Promise<BedsheetProduct> {
-  saveProductToFirestore(product);
+  await saveProductToFirestore(product).catch(() => {});
   try {
     const res = await fetch('/api/products', {
       method: 'POST',
@@ -275,14 +285,12 @@ export async function addProduct(product: BedsheetProduct): Promise<BedsheetProd
 }
 
 export async function updateSingleProduct(id: string, product: Partial<BedsheetProduct>): Promise<void> {
-  // Save to Firestore
+  // Save directly to Firebase Firestore
   try {
-    const cached = JSON.parse(localStorage.getItem('cotton_nest_products') || '[]');
-    const existing = cached.find((p: BedsheetProduct) => p.id === id);
-    if (existing) {
-      saveProductToFirestore({ ...existing, ...product });
-    }
-  } catch {}
+    await saveProductToFirestore({ id, ...product } as BedsheetProduct);
+  } catch (err) {
+    console.warn('Failed to update product in Firestore:', err);
+  }
 
   try {
     await fetch(`/api/products/${id}`, {

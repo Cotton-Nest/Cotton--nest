@@ -40,6 +40,7 @@ import {
   saveImageToFirestore,
   getAllImagesFromFirestore,
   getProductsFromFirestore,
+  saveAllProductsToFirestore,
   subscribeToProductsFromFirestore,
   subscribeToImagesFromFirestore,
   subscribeToSiteContentFromFirestore,
@@ -203,11 +204,11 @@ export default function App() {
       }
     }).catch(() => {});
 
-    // 2. REAL-TIME FIREBASE FIRESTORE LISTENERS (GIVE STRICT PREFERENCE TO FIREBASE)
-    // Instantly syncs any photo upload or product change made on PC across all other devices
+    // 2. REAL-TIME FIREBASE FIRESTORE LISTENERS
+    // Instantly syncs any Name, Detail, or Photo update made on PC across all devices (mobile and desktop)
     const unsubProducts = subscribeToProductsFromFirestore((cloudProducts) => {
       if (!isMounted || isAdminOpenRef.current || !cloudProducts || cloudProducts.length === 0) return;
-      if (Date.now() - lastAdminSaveRef.current < 15000) return;
+      if (Date.now() - lastAdminSaveRef.current < 5000) return;
 
       const orderMap = new Map(BEDSHEETS_CATALOG.map((p, idx) => [p.id, idx]));
       const formatted = cloudProducts.map((p) => ({
@@ -231,7 +232,7 @@ export default function App() {
       setCustomImages((prev) => ({ ...prev, ...newCustomMap }));
 
       // Keep local client cache updated
-      const cloudTime = Math.max(...formatted.map((p) => p.updatedAt || 0), Date.now());
+      const cloudTime = Math.max(...cloudProducts.map((p) => p.updatedAt || 0), Date.now());
       savePersistentProducts(formatted, cloudTime).catch(() => {});
       try {
         const lightweight = formatted.map((p) =>
@@ -244,7 +245,7 @@ export default function App() {
 
     const unsubImages = subscribeToImagesFromFirestore((cloudImgs) => {
       if (!isMounted || !cloudImgs || Object.keys(cloudImgs).length === 0) return;
-      setCustomImages((prev) => ({ ...prev, ...cloudImgs }));
+      setCustomImages((prev) => ({ ...cloudImgs, ...prev }));
     });
 
     const unsubContent = subscribeToSiteContentFromFirestore((cloudContent) => {
@@ -258,48 +259,65 @@ export default function App() {
       setOrders(cloudOrders);
     });
 
-    // 3. Complete authoritative load giving direct preference to Firebase
+    // 3. Complete authoritative load giving primary preference to Firebase Firestore
     const loadDataFromServer = async () => {
       try {
         const [cloudProducts, cloudImgs, serverProducts, serverOrders, serverContent] = await Promise.all([
           getProductsFromFirestore().catch(() => null),
           getAllImagesFromFirestore().catch(() => ({} as Record<string, string>)),
-          getProducts().catch(() => null),
+          fetch(`/api/products?t=${Date.now()}`, { cache: 'no-store' })
+            .then((r) => (r.ok ? r.json() : null))
+            .catch(() => null),
           getOrders().catch(() => null),
           getSiteContent().catch(() => null),
         ]);
 
         if (isMounted) {
-          // Firebase Firestore takes preference!
-          const authoritative = (cloudProducts && cloudProducts.length > 0) ? cloudProducts : serverProducts;
+          const serverTime = serverProducts && serverProducts.length > 0
+            ? Math.max(...serverProducts.map((p: any) => p.updatedAt || 0), 0)
+            : 0;
+          const cloudTime = cloudProducts && cloudProducts.length > 0
+            ? Math.max(...cloudProducts.map((p: any) => p.updatedAt || 0), 0)
+            : 0;
+
+          // Primary preference to Firebase Firestore!
+          let authoritative = (cloudProducts && cloudProducts.length > 0)
+            ? cloudProducts
+            : serverProducts;
+
+          // If local server has newer offline changes, propagate up to Firestore
+          if (serverProducts && serverProducts.length > 0 && serverTime > cloudTime) {
+            authoritative = serverProducts;
+            saveAllProductsToFirestore(serverProducts).catch(() => {});
+          }
 
           if (authoritative && authoritative.length > 0) {
             const orderMap = new Map(BEDSHEETS_CATALOG.map((p, idx) => [p.id, idx]));
-            authoritative.sort((a, b) => {
-              const orderA = typeof (a as any).order === 'number' ? (a as any).order : (orderMap.get(a.id) ?? 999);
-              const orderB = typeof (b as any).order === 'number' ? (b as any).order : (orderMap.get(b.id) ?? 999);
+            authoritative.sort((a: any, b: any) => {
+              const orderA = typeof a.order === 'number' ? a.order : (orderMap.get(a.id) ?? 999);
+              const orderB = typeof b.order === 'number' ? b.order : (orderMap.get(b.id) ?? 999);
               return orderA - orderB;
             });
 
-            const mergedProducts = authoritative.map((p) => {
-              const photo = cloudImgs[p.id] || p.image;
+            const mergedProducts = authoritative.map((p: any) => {
+              const photo = p.image || cloudImgs[p.id];
               return { ...p, image: resolveBedsheetImage(photo, p.id, p.updatedAt) };
             });
 
-            if (!isAdminOpenRef.current && Date.now() - lastAdminSaveRef.current > 20000) {
+            if (!isAdminOpenRef.current && Date.now() - lastAdminSaveRef.current > 5000) {
               setProducts(mergedProducts);
-              const newCustomMap: Record<string, string> = { ...cloudImgs };
-              mergedProducts.forEach((p) => {
+              const newCustomMap: Record<string, string> = {};
+              mergedProducts.forEach((p: any) => {
                 if (p.image) newCustomMap[p.id] = p.image;
               });
-              setCustomImages((prev) => ({ ...prev, ...newCustomMap }));
+              setCustomImages(newCustomMap);
             }
           }
 
           if (serverOrders) {
             setOrders(serverOrders);
           }
-          if (serverContent && (!isAdminOpenRef.current && Date.now() - lastAdminSaveRef.current > 20000)) {
+          if (serverContent && (!isAdminOpenRef.current && Date.now() - lastAdminSaveRef.current > 5000)) {
             setSiteContent(serverContent);
           }
         }
@@ -319,10 +337,10 @@ export default function App() {
 
     window.addEventListener('visibilitychange', handleVisibilityChange);
 
-    // Background interval: Polls server to catch edits made on PC within seconds
+    // Background interval: Polls server to catch edits made on PC within seconds (4s for instant mobile sync)
     const interval = setInterval(() => {
       if (document.visibilityState === 'visible' && isMounted && !isAdminOpenRef.current) {
-        fetch('/api/sync-check')
+        fetch(`/api/sync-check?t=${Date.now()}`, { cache: 'no-store' })
           .then((r) => r.json())
           .then((sync) => {
             if (sync && typeof sync.timestamp === 'number') {
@@ -338,7 +356,7 @@ export default function App() {
           if (o && isMounted) setOrders(o);
         }).catch(() => {});
       }
-    }, 10000);
+    }, 4000);
 
     return () => {
       isMounted = false;
@@ -418,6 +436,13 @@ export default function App() {
       console.warn('Storage quota exceeded:', err);
     }
     await saveAllProducts(updatedProducts);
+  };
+
+  const handleUpdateSingleProduct = (updatedProduct: BedsheetProduct) => {
+    setProducts((prev) =>
+      prev.map((p) => (p.id === updatedProduct.id ? updatedProduct : p))
+    );
+    setSelectedProduct(updatedProduct);
   };
 
   // Admin: Update Orders & persist to backend server
@@ -867,6 +892,7 @@ export default function App() {
             onAddToCart={handleAddToCart}
             customImage={selectedProduct ? customImages[selectedProduct.id] : undefined}
             onUploadImage={handleUploadImage}
+            onUpdateProduct={handleUpdateSingleProduct}
             isOwnerMode={isOwnerMode}
             onViewTermsAndConditions={() => {
               setActiveTab('tc');

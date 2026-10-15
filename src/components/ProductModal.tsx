@@ -1,8 +1,9 @@
 import React from 'react';
-import { X, Check, MessageCircle, ShoppingBag, ShieldCheck, Truck, RotateCcw, MapPin, Sparkles } from 'lucide-react';
+import { X, Check, MessageCircle, ShoppingBag, ShieldCheck, Truck, RotateCcw, MapPin, Sparkles, Edit3, Save, ImageIcon, Cloud, Loader2 } from 'lucide-react';
 import { BedsheetProduct, BedsheetVariant, COMPANY_DETAILS } from '../data/products';
 import { sendWhatsAppProductOrder } from '../utils/whatsappOrder';
 import { resolveBedsheetImage, handleImageFallback } from '../utils/imageUrl';
+import { saveProductDetailsToFirestore, uploadAndSaveProductImage } from '../services/firebaseStore';
 
 interface ProductModalProps {
   product: BedsheetProduct | null;
@@ -10,6 +11,7 @@ interface ProductModalProps {
   onAddToCart: (product: BedsheetProduct, quantity: number, variant?: BedsheetVariant) => void;
   customImage?: string;
   onUploadImage?: (productId: string, dataUrl: string) => void;
+  onUpdateProduct?: (updatedProduct: BedsheetProduct) => void;
   isOwnerMode?: boolean;
   onViewTermsAndConditions?: () => void;
 }
@@ -20,6 +22,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
   onAddToCart,
   customImage,
   onUploadImage,
+  onUpdateProduct,
   isOwnerMode = false,
   onViewTermsAndConditions,
 }) => {
@@ -28,10 +31,42 @@ export const ProductModal: React.FC<ProductModalProps> = ({
   const [selectedVariantId, setSelectedVariantId] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
+  // Owner Edit Mode State
+  const [isEditing, setIsEditing] = React.useState(false);
+  const [editName, setEditName] = React.useState('');
+  const [editPrice, setEditPrice] = React.useState(0);
+  const [editOriginalPrice, setEditOriginalPrice] = React.useState(0);
+  const [editDimensions, setEditDimensions] = React.useState('');
+  const [editThreadCount, setEditThreadCount] = React.useState('');
+  const [editFabric, setEditFabric] = React.useState('');
+  const [editPillowCovers, setEditPillowCovers] = React.useState('');
+  const [editDescription, setEditDescription] = React.useState('');
+  const [editBadge, setEditBadge] = React.useState('');
+  const [editInStock, setEditInStock] = React.useState(true);
+  const [editStockQuantity, setEditStockQuantity] = React.useState(10);
+  const [isSaving, setIsSaving] = React.useState(false);
+  const [saveSuccessMessage, setSaveSuccessMessage] = React.useState<string | null>(null);
+
   React.useEffect(() => {
     setSelectedVariantId(null);
     setQuantity(1);
     setAdded(false);
+    setIsEditing(false);
+    setSaveSuccessMessage(null);
+
+    if (product) {
+      setEditName(product.name);
+      setEditPrice(product.price);
+      setEditOriginalPrice(product.originalPrice);
+      setEditDimensions(product.dimensions);
+      setEditThreadCount(product.threadCount);
+      setEditFabric(product.fabric);
+      setEditPillowCovers(product.pillowCovers);
+      setEditDescription(product.description);
+      setEditBadge(product.badge || '');
+      setEditInStock(product.inStock);
+      setEditStockQuantity(product.stockQuantity ?? 10);
+    }
   }, [product?.id, product?.image, customImage]);
 
   if (!product) return null;
@@ -43,10 +78,70 @@ export const ProductModal: React.FC<ProductModalProps> = ({
   const rawImage = activeVariant?.image || product.image || customImage;
   const displayImage = resolveBedsheetImage(rawImage, product.id, product.updatedAt);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSaveToFirebase = async () => {
+    if (!product) return;
+    setIsSaving(true);
+    setSaveSuccessMessage(null);
+    try {
+      const updatedData: Partial<BedsheetProduct> = {
+        name: editName.trim() || product.name,
+        price: Number(editPrice) || product.price,
+        originalPrice: Number(editOriginalPrice) || product.originalPrice,
+        dimensions: editDimensions.trim() || product.dimensions,
+        threadCount: editThreadCount.trim() || product.threadCount,
+        fabric: editFabric.trim() || product.fabric,
+        pillowCovers: editPillowCovers.trim() || product.pillowCovers,
+        description: editDescription.trim() || product.description,
+        badge: editBadge.trim() || undefined,
+        inStock: editInStock,
+        stockQuantity: Number(editStockQuantity),
+        updatedAt: Date.now(),
+      };
+
+      await saveProductDetailsToFirestore(product.id, updatedData);
+
+      const mergedProduct: BedsheetProduct = {
+        ...product,
+        ...updatedData,
+      };
+
+      if (onUpdateProduct) {
+        onUpdateProduct(mergedProduct);
+      }
+
+      setSaveSuccessMessage('Saved to Firebase Firestore!');
+      setTimeout(() => {
+        setSaveSuccessMessage(null);
+        setIsEditing(false);
+      }, 1500);
+    } catch (err) {
+      console.error('Failed to save product details:', err);
+      alert('Failed to save to Firebase. Please try again.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handlePhotoUploadDirect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file && onUploadImage) {
-      onUploadImage(product.id, file as any);
+    if (!file || !product) return;
+    setIsSaving(true);
+    setSaveSuccessMessage('Uploading photo to Firebase...');
+    try {
+      const newUrl = await uploadAndSaveProductImage(product.id, file);
+      if (onUploadImage) {
+        onUploadImage(product.id, newUrl);
+      }
+      if (onUpdateProduct) {
+        onUpdateProduct({ ...product, image: newUrl, updatedAt: Date.now() });
+      }
+      setSaveSuccessMessage('Photo saved to Firebase!');
+      setTimeout(() => setSaveSuccessMessage(null), 2500);
+    } catch (err) {
+      console.error('Failed to upload image:', err);
+      alert('Failed to upload photo to Firebase.');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -81,6 +176,37 @@ export const ProductModal: React.FC<ProductModalProps> = ({
 
       <div className="relative bg-[#FAF7F2] w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-3xl border border-[#EAE2D5] shadow-2xl z-10 text-[#2C2420]">
         
+        {/* Owner Edit Bar */}
+        {isOwnerMode && (
+          <div className="bg-[#2C2420] text-white px-5 py-3 rounded-t-3xl flex items-center justify-between gap-3 text-xs border-b border-[#DEC89B]/30">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="font-semibold text-[#EAE2D5]">Store Owner Mode</span>
+              <span className="text-[#A8988D] hidden sm:inline">· Firebase Firestore Direct Edit</span>
+            </div>
+            <div className="flex items-center gap-3">
+              {saveSuccessMessage && (
+                <span className="text-emerald-400 font-semibold flex items-center gap-1 text-xs">
+                  <Check className="w-3.5 h-3.5" />
+                  {saveSuccessMessage}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => setIsEditing(!isEditing)}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer ${
+                  isEditing
+                    ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                    : 'bg-[#8C2E46] hover:bg-[#A33452] text-white shadow-xs'
+                }`}
+              >
+                <Edit3 className="w-3.5 h-3.5" />
+                <span>{isEditing ? 'Cancel Edit' : 'Edit Details & Photo'}</span>
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Close Button */}
         <button
           onClick={onClose}
@@ -113,16 +239,17 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                   <input
                     type="file"
                     ref={fileInputRef}
-                    onChange={handleFileChange}
+                    onChange={handlePhotoUploadDirect}
                     accept="image/*"
                     className="hidden"
                   />
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className="px-2.5 py-1 bg-[#FAF7F2]/90 hover:bg-white text-[#2C2420] text-xs font-medium rounded-lg border border-[#EAE2D5] shadow-xs backdrop-blur-xs flex items-center gap-1.5 cursor-pointer"
+                    className="px-2.5 py-1.5 bg-[#FAF7F2]/95 hover:bg-white text-[#2C2420] text-xs font-semibold rounded-lg border border-[#DEC89B] shadow-xs backdrop-blur-xs flex items-center gap-1.5 cursor-pointer"
                   >
-                    <span>📷 Use Exact Photo (Owner)</span>
+                    <ImageIcon className="w-3.5 h-3.5 text-[#C29E57]" />
+                    <span>📷 Upload Photo (Firebase)</span>
                   </button>
                 </div>
               )}
@@ -132,7 +259,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
             <div className="grid grid-cols-3 gap-2 text-center text-xs">
               <div className="p-2.5 bg-[#F4EFE6] rounded-xl border border-[#EAE2D5]">
                 <p className="text-[10px] text-[#7A6458] uppercase">Dimension</p>
-                <p className="font-semibold text-[#2C2420] mt-0.5">108″ × 108″</p>
+                <p className="font-semibold text-[#2C2420] mt-0.5">{product.dimensions.split('(')[0].trim()}</p>
               </div>
               <div className="p-2.5 bg-[#F4EFE6] rounded-xl border border-[#EAE2D5]">
                 <p className="text-[10px] text-[#7A6458] uppercase">Thread Count</p>
@@ -171,10 +298,207 @@ export const ProductModal: React.FC<ProductModalProps> = ({
             </div>
           </div>
 
-          {/* Right Column: Contiguous Purchase Module */}
+          {/* Right Column: Contiguous Purchase Module OR Owner Edit Form */}
           <div className="flex flex-col justify-between space-y-5">
             
-            <div className="space-y-4">
+            {isEditing ? (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between pb-2 border-b border-[#EAE2D5]">
+                  <span className="font-serif-luxury text-xl font-bold text-[#2C2420] flex items-center gap-2">
+                    <Edit3 className="w-4 h-4 text-[#8C2E46]" />
+                    Edit Bedsheet Details
+                  </span>
+                  <span className="text-[10px] bg-[#FAF7F2] text-[#8C2E46] border border-[#FAD1DC] px-2 py-0.5 rounded font-semibold">
+                    Firebase Live
+                  </span>
+                </div>
+
+                {/* Name */}
+                <div>
+                  <label className="text-[10px] font-semibold text-[#8C7A70] uppercase tracking-wider block mb-1">
+                    Bedsheet Name / Title
+                  </label>
+                  <input
+                    type="text"
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    placeholder="Bedsheet Name"
+                    className="w-full px-3 py-2 bg-white border border-[#DEC89B] rounded-xl text-sm font-semibold text-[#2C2420] focus:outline-hidden focus:border-[#8C2E46]"
+                  />
+                </div>
+
+                {/* Pricing: Selling Price & MRP */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] font-semibold text-[#8C7A70] uppercase tracking-wider block mb-1">
+                      Selling Price (₹)
+                    </label>
+                    <input
+                      type="number"
+                      value={editPrice}
+                      onChange={(e) => setEditPrice(Number(e.target.value))}
+                      className="w-full px-3 py-2 bg-white border border-[#DEC89B] rounded-xl text-sm font-bold text-[#8C2E46] focus:outline-hidden focus:border-[#8C2E46]"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-semibold text-[#8C7A70] uppercase tracking-wider block mb-1">
+                      MRP / Original (₹)
+                    </label>
+                    <input
+                      type="number"
+                      value={editOriginalPrice}
+                      onChange={(e) => setEditOriginalPrice(Number(e.target.value))}
+                      className="w-full px-3 py-2 bg-white border border-[#EAE2D5] rounded-xl text-sm text-[#7A6458] focus:outline-hidden focus:border-[#C29E57]"
+                    />
+                  </div>
+                </div>
+
+                {/* Dimensions & Thread Count */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] font-semibold text-[#8C7A70] uppercase tracking-wider block mb-1">
+                      Dimensions
+                    </label>
+                    <input
+                      type="text"
+                      value={editDimensions}
+                      onChange={(e) => setEditDimensions(e.target.value)}
+                      placeholder="108 x 108 inches"
+                      className="w-full px-3 py-1.5 bg-white border border-[#EAE2D5] rounded-xl text-xs text-[#2C2420] focus:outline-hidden focus:border-[#C29E57]"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-semibold text-[#8C7A70] uppercase tracking-wider block mb-1">
+                      Thread Count
+                    </label>
+                    <input
+                      type="text"
+                      value={editThreadCount}
+                      onChange={(e) => setEditThreadCount(e.target.value)}
+                      placeholder="350 Thread Count"
+                      className="w-full px-3 py-1.5 bg-white border border-[#EAE2D5] rounded-xl text-xs text-[#2C2420] focus:outline-hidden focus:border-[#C29E57]"
+                    />
+                  </div>
+                </div>
+
+                {/* Fabric & Badge */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] font-semibold text-[#8C7A70] uppercase tracking-wider block mb-1">
+                      Fabric Material
+                    </label>
+                    <input
+                      type="text"
+                      value={editFabric}
+                      onChange={(e) => setEditFabric(e.target.value)}
+                      placeholder="100% Pure Percale Cotton"
+                      className="w-full px-3 py-1.5 bg-white border border-[#EAE2D5] rounded-xl text-xs text-[#2C2420] focus:outline-hidden focus:border-[#C29E57]"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-semibold text-[#8C7A70] uppercase tracking-wider block mb-1">
+                      Badge / Tag
+                    </label>
+                    <input
+                      type="text"
+                      value={editBadge}
+                      onChange={(e) => setEditBadge(e.target.value)}
+                      placeholder="e.g. Best Seller, 108x108 Pack"
+                      className="w-full px-3 py-1.5 bg-white border border-[#EAE2D5] rounded-xl text-xs text-[#2C2420] focus:outline-hidden focus:border-[#C29E57]"
+                    />
+                  </div>
+                </div>
+
+                {/* In Stock Toggle & Stock Qty */}
+                <div className="grid grid-cols-2 gap-3 items-center bg-[#F4EFE6]/60 p-3 rounded-xl border border-[#EAE2D5]">
+                  <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-[#2C2420]">
+                    <input
+                      type="checkbox"
+                      checked={editInStock}
+                      onChange={(e) => setEditInStock(e.target.checked)}
+                      className="w-4 h-4 text-[#8C2E46] rounded accent-[#8C2E46]"
+                    />
+                    <span>Available / In Stock</span>
+                  </label>
+                  <div>
+                    <label className="text-[10px] font-semibold text-[#8C7A70] uppercase tracking-wider block mb-0.5">
+                      Units in Stock
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={editStockQuantity}
+                      onChange={(e) => setEditStockQuantity(Number(e.target.value))}
+                      className="w-full px-2 py-1 bg-white border border-[#EAE2D5] rounded-lg text-xs text-[#2C2420]"
+                    />
+                  </div>
+                </div>
+
+                {/* Description */}
+                <div>
+                  <label className="text-[10px] font-semibold text-[#8C7A70] uppercase tracking-wider block mb-1">
+                    Product Description
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={editDescription}
+                    onChange={(e) => setEditDescription(e.target.value)}
+                    className="w-full px-3 py-2 bg-white border border-[#EAE2D5] rounded-xl text-xs text-[#2C2420] focus:outline-hidden focus:border-[#C29E57]"
+                  />
+                </div>
+
+                {/* Photo Upload prompt inside edit panel */}
+                <div className="bg-white p-3 rounded-xl border border-[#DEC89B] space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-[#2C2420] flex items-center gap-1.5">
+                      <ImageIcon className="w-3.5 h-3.5 text-[#C29E57]" />
+                      Bedsheet Photo
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="px-2.5 py-1 text-xs font-semibold bg-[#FDEAF0] text-[#8C2E46] border border-[#FAD1DC] rounded-lg hover:bg-[#F9D3DE] cursor-pointer"
+                    >
+                      Choose New Photo
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-[#7A6458]">
+                    Photos are automatically compressed to ~70KB and stored directly in Firebase Firestore.
+                  </p>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex items-center gap-3 pt-2">
+                  <button
+                    type="button"
+                    disabled={isSaving}
+                    onClick={handleSaveToFirebase}
+                    className="flex-1 py-3 px-4 bg-[#8C2E46] hover:bg-[#732438] text-white text-xs font-semibold rounded-xl shadow-xs transition-colors cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    {isSaving ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin text-white" />
+                        <span>Saving to Firebase...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Save className="w-4 h-4 text-white" />
+                        <span>Save to Firebase Firestore</span>
+                      </>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditing(false)}
+                    className="py-3 px-4 bg-white hover:bg-[#F4EFE6] text-[#6B5D55] text-xs font-medium rounded-xl border border-[#EAE2D5] transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-4">
               {/* Category & Collection */}
               <div className="flex items-center gap-2 text-xs font-semibold tracking-wider uppercase text-[#A8823B]">
                 <span>{product.collection}</span>
@@ -427,6 +751,8 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                 </span>
               </div>
             </div>
+          </>
+        )}
 
           </div>
 

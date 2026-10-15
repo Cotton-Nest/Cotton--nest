@@ -95,9 +95,20 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           </div>
         ) : null}
 
-        {/* Upload exact original photo button - only visible to store owners */}
+        {/* Owner Controls: Edit Details & Upload Photo */}
         {isOwnerMode && (
-          <div className="absolute top-3 right-3 z-10">
+          <div className="absolute top-3 right-3 z-10 flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onQuickView(product);
+              }}
+              title="Edit Bedsheet Details & Photo (Owner Mode)"
+              className="p-1.5 bg-[#FAF7F2]/95 hover:bg-white text-[#8C2E46] rounded-lg border border-[#FAD1DC] shadow-xs text-[10px] font-semibold flex items-center gap-1 backdrop-blur-xs transition-colors"
+            >
+              <span>✏️ Edit</span>
+            </button>
             <input
               type="file"
               ref={fileInputRef}
@@ -114,7 +125,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
               title="Upload/Replace with your original photo from device (Owner only)"
               className="p-1.5 bg-[#FAF7F2]/90 hover:bg-white text-[#6B5D55] hover:text-[#B83F60] rounded-lg border border-[#EAE2D5] shadow-xs text-[10px] flex items-center gap-1 backdrop-blur-xs transition-colors"
             >
-              <span>📷 Sync Photo</span>
+              <span>📷 Photo</span>
             </button>
           </div>
         )}
