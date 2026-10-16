@@ -1,12 +1,12 @@
 import React from 'react';
-import { ShoppingBag, Phone, MessageCircle, Menu, X, Sparkles, MapPin, SlidersHorizontal, Package, User, LogOut } from 'lucide-react';
+import { ShoppingBag, Phone, MessageCircle, Menu, X, Sparkles, MapPin, SlidersHorizontal, Package, User, LogOut, Star } from 'lucide-react';
 import { COMPANY_DETAILS } from '../data/products';
 import { SiteContent } from '../data/siteContent';
 import { useAuth } from '../context/AuthContext';
 
 interface NavbarProps {
-  activeTab: 'home' | 'catalogue' | 'story' | 'store' | 'orders' | 'tc';
-  setActiveTab: (tab: 'home' | 'catalogue' | 'story' | 'store' | 'orders' | 'tc') => void;
+  activeTab: 'home' | 'catalogue' | 'story' | 'store' | 'orders' | 'tc' | 'reviews';
+  setActiveTab: (tab: 'home' | 'catalogue' | 'story' | 'store' | 'orders' | 'tc' | 'reviews') => void;
   cartCount: number;
   openCart: () => void;
   onOpenPhotoManager?: () => void;
@@ -35,7 +35,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   const brandName = content?.company.name || "Cotton Nest";
   const contactPhone = content?.company.phone || COMPANY_DETAILS.phone;
 
-  const handleNavClick = (tab: 'home' | 'catalogue' | 'story' | 'store' | 'orders' | 'tc') => {
+  const handleNavClick = (tab: 'home' | 'catalogue' | 'story' | 'store' | 'orders' | 'tc' | 'reviews') => {
     setActiveTab(tab);
     setMobileMenuOpen(false);
     setUserDropdownOpen(false);
@@ -125,6 +125,25 @@ export const Navbar: React.FC<NavbarProps> = ({
               )}
             </button>
 
+            {/* Customer Reviews Tab */}
+            <button
+              onClick={() => handleNavClick('reviews')}
+              className={`relative py-1 cursor-pointer transition-colors flex items-center gap-1.5 ${
+                activeTab === 'reviews'
+                  ? 'text-[#B83F60] font-semibold'
+                  : 'text-[#6B5D55] hover:text-[#B83F60]'
+              }`}
+            >
+              <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-400" />
+              <span>Reviews</span>
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
+                4.9 ★
+              </span>
+              {activeTab === 'reviews' && (
+                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#B83F60] rounded-full" />
+              )}
+            </button>
+
             {/* LIVE ORDERS TAB - SYNCED WITH ADMIN */}
             <button
               onClick={() => handleNavClick('orders')}
@@ -175,8 +194,8 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Zone 3: Primary functional actions & User Profile */}
           <div className="flex items-center gap-2 sm:gap-3">
             
-            {/* Owner Exclusive Controls */}
-            {isOwnerMode ? (
+            {/* Owner Exclusive Controls - Only visible when owner mode is activated via Ctrl+Shift+A or URL */}
+            {isOwnerMode && (
               <>
                 {onOpenAdmin && (
                   <button
@@ -201,18 +220,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                   </button>
                 )}
               </>
-            ) : (
-              onOpenAdmin && (
-                <button
-                  type="button"
-                  onClick={onOpenAdmin}
-                  className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-[#6B5D55] hover:text-[#8C2E46] bg-white hover:bg-[#FDEAF0] border border-[#EAE2D5] hover:border-[#FAD1DC] rounded-lg transition-colors cursor-pointer shadow-2xs"
-                  title="Store Owner Access / Edit Mode (PIN: 2508)"
-                >
-                  <SlidersHorizontal className="w-3.5 h-3.5 text-[#8C2E46]" />
-                  <span>Owner Edit</span>
-                </button>
-              )
             )}
 
             {/* Google Sign In / User Profile Button */}
@@ -343,6 +350,22 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span className="text-xs">🌸</span>
             </button>
 
+            {/* Mobile Customer Reviews */}
+            <button
+              onClick={() => handleNavClick('reviews')}
+              className={`w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium flex items-center justify-between ${
+                activeTab === 'reviews' ? 'bg-[#FDEAF0] text-[#B83F60] font-semibold' : 'text-[#6B5D55]'
+              }`}
+            >
+              <span className="flex items-center gap-2">
+                <Star className="w-4 h-4 text-amber-500 fill-amber-400" />
+                Customer Reviews
+              </span>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
+                4.9 ★ (Verified)
+              </span>
+            </button>
+
             {/* Mobile Live Orders */}
             <button
               onClick={() => handleNavClick('orders')}
@@ -410,7 +433,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
             )}
 
-            {isOwnerMode ? (
+            {isOwnerMode && (
               <>
                 {onOpenPhotoManager && (
                   <button
@@ -443,25 +466,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                   </button>
                 )}
               </>
-            ) : (
-              onOpenAdmin && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMobileMenuOpen(false);
-                    onOpenAdmin();
-                  }}
-                  className="w-full text-left px-3 py-2.5 rounded-lg text-sm font-semibold text-[#8C2E46] bg-[#FDEAF0] border border-[#FAD1DC] flex items-center justify-between cursor-pointer"
-                >
-                  <span className="flex items-center gap-2">
-                    <SlidersHorizontal className="w-4 h-4 text-[#8C2E46]" />
-                    Store Owner Login / Edit Mode
-                  </span>
-                  <span className="text-[10px] bg-[#FAF7F2] text-[#8C2E46] px-2 py-0.5 rounded border border-[#F9D3DE] font-bold">
-                    PIN: 2508
-                  </span>
-                </button>
-              )
             )}
 
             <div className="pt-3 border-t border-[#EAE2D5] flex items-center gap-3">

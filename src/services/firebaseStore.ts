@@ -9,6 +9,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { BedsheetProduct, BEDSHEETS_CATALOG } from '../data/products';
+import { Review, INITIAL_REVIEWS } from '../data/reviews';
 import { compressImage } from '../utils/imageCompressor';
 import { resolveBedsheetImage } from '../utils/imageUrl';
 import { savePersistentProducts, savePersistentImage, getAllPersistentImages } from '../utils/persistentStorage';
@@ -302,3 +303,129 @@ export function subscribeToProductsRealtime(
     return () => {};
   }
 }
+
+/**
+ * 8. FETCH REVIEWS FROM FIRESTORE
+ * Reads customer reviews from Firestore 'reviews' collection.
+ * Seeds initial verified reviews if collection is empty.
+ */
+export async function fetchReviewsFromFirestore(productId?: string): Promise<Review[]> {
+  try {
+    const colRef = collection(db, 'reviews');
+    const snap = await getDocs(colRef);
+
+    if (!snap.empty) {
+      const items: Review[] = [];
+      snap.forEach((d) => {
+        const data = d.data() as Review;
+        if (data && data.reviewerName) {
+          items.push({ ...data, id: d.id });
+        }
+      });
+
+      if (items.length > 0) {
+        items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        if (productId && productId !== 'all') {
+          return items.filter((r) => r.productId === productId || r.productId === 'all');
+        }
+        return items;
+      }
+    }
+  } catch (err) {
+    console.warn('fetchReviewsFromFirestore warning:', err);
+  }
+
+  // Seed initial reviews into Firestore in background and return them
+  try {
+    const colRef = collection(db, 'reviews');
+    INITIAL_REVIEWS.forEach((rev) => {
+      setDoc(doc(colRef, rev.id), sanitize(rev)).catch(() => {});
+    });
+  } catch {}
+
+  if (productId && productId !== 'all') {
+    return INITIAL_REVIEWS.filter((r) => r.productId === productId || r.productId === 'all');
+  }
+  return INITIAL_REVIEWS;
+}
+
+/**
+ * 9. ADD CUSTOMER REVIEW TO FIRESTORE
+ */
+export async function addReviewToFirestore(
+  reviewData: Omit<Review, 'id' | 'createdAt'>
+): Promise<Review> {
+  const id = `rev-${Date.now().toString(36)}-${Math.floor(Math.random() * 1000)}`;
+  const fullReview: Review = {
+    ...reviewData,
+    id,
+    createdAt: Date.now(),
+    verifiedPurchase: true,
+    helpfulCount: 1,
+  };
+
+  const sanitized = sanitize(fullReview);
+
+  try {
+    const docRef = doc(db, 'reviews', id);
+    await setDoc(docRef, sanitized);
+  } catch (err) {
+    console.warn('Firestore addReview warning:', err);
+  }
+
+  return fullReview;
+}
+
+/**
+ * 10. DELETE REVIEW FROM FIRESTORE (For Store Owner Moderation)
+ */
+export async function deleteReviewFromFirestore(reviewId: string): Promise<void> {
+  try {
+    const docRef = doc(db, 'reviews', reviewId);
+    await deleteDoc(docRef);
+  } catch (err) {
+    console.warn('Firestore deleteReview warning:', err);
+  }
+}
+
+/**
+ * 11. REAL-TIME REVIEWS SUBSCRIPTION
+ */
+export function subscribeToReviewsRealtime(
+  onUpdate: (reviews: Review[]) => void,
+  productId?: string
+): () => void {
+  try {
+    const colRef = collection(db, 'reviews');
+    return onSnapshot(
+      colRef,
+      (snap) => {
+        if (!snap.empty) {
+          const items: Review[] = [];
+          snap.forEach((d) => {
+            const data = d.data() as Review;
+            if (data && data.reviewerName) {
+              items.push({ ...data, id: d.id });
+            }
+          });
+
+          if (items.length > 0) {
+            items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+            if (productId && productId !== 'all') {
+              onUpdate(items.filter((r) => r.productId === productId || r.productId === 'all'));
+            } else {
+              onUpdate(items);
+            }
+          }
+        }
+      },
+      (err) => {
+        console.warn('Firestore reviews subscription warning:', err);
+      }
+    );
+  } catch (err) {
+    console.warn('Failed to subscribe to reviews in Firestore:', err);
+    return () => {};
+  }
+}
+

@@ -1,9 +1,10 @@
 import React from 'react';
-import { X, Check, MessageCircle, ShoppingBag, ShieldCheck, Truck, RotateCcw, MapPin, Sparkles, Edit3, Save, ImageIcon, Cloud, Loader2 } from 'lucide-react';
+import { X, Check, MessageCircle, ShoppingBag, ShieldCheck, Truck, RotateCcw, MapPin, Sparkles, Edit3, Save, ImageIcon, Cloud, Loader2, Star, ThumbsUp } from 'lucide-react';
 import { BedsheetProduct, BedsheetVariant, COMPANY_DETAILS } from '../data/products';
 import { sendWhatsAppProductOrder } from '../utils/whatsappOrder';
 import { resolveBedsheetImage, handleImageFallback } from '../utils/imageUrl';
 import { saveProductDetailsToFirestore, uploadAndSaveProductImage } from '../services/firebaseStore';
+import { ProductReview, getProductRatingSummary } from '../data/reviews';
 
 interface ProductModalProps {
   product: BedsheetProduct | null;
@@ -14,6 +15,10 @@ interface ProductModalProps {
   onUpdateProduct?: (updatedProduct: BedsheetProduct) => void;
   isOwnerMode?: boolean;
   onViewTermsAndConditions?: () => void;
+  initialEditMode?: boolean;
+  onOpenOwnerAuth?: () => void;
+  reviews?: ProductReview[];
+  onOpenWriteReview?: (productId: string) => void;
 }
 
 export const ProductModal: React.FC<ProductModalProps> = ({
@@ -25,6 +30,10 @@ export const ProductModal: React.FC<ProductModalProps> = ({
   onUpdateProduct,
   isOwnerMode = false,
   onViewTermsAndConditions,
+  initialEditMode = false,
+  onOpenOwnerAuth,
+  reviews = [],
+  onOpenWriteReview,
 }) => {
   const [quantity, setQuantity] = React.useState(1);
   const [added, setAdded] = React.useState(false);
@@ -32,7 +41,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   // Owner Edit Mode State
-  const [isEditing, setIsEditing] = React.useState(false);
+  const [isEditing, setIsEditing] = React.useState(initialEditMode);
   const [editName, setEditName] = React.useState('');
   const [editPrice, setEditPrice] = React.useState(0);
   const [editOriginalPrice, setEditOriginalPrice] = React.useState(0);
@@ -51,7 +60,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
     setSelectedVariantId(null);
     setQuantity(1);
     setAdded(false);
-    setIsEditing(false);
+    setIsEditing(initialEditMode);
     setSaveSuccessMessage(null);
 
     if (product) {
@@ -77,6 +86,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
 
   const rawImage = activeVariant?.image || product.image || customImage;
   const displayImage = resolveBedsheetImage(rawImage, product.id, product.updatedAt);
+  const productRating = product ? getProductRatingSummary(product.id, reviews) : { average: 4.9, count: 0, reviews: [] };
 
   const handleSaveToFirebase = async () => {
     if (!product) return;
@@ -176,8 +186,8 @@ export const ProductModal: React.FC<ProductModalProps> = ({
 
       <div className="relative bg-[#FAF7F2] w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-3xl border border-[#EAE2D5] shadow-2xl z-10 text-[#2C2420]">
         
-        {/* Owner Edit Bar */}
-        {isOwnerMode && (
+        {/* Owner Edit Bar or Unlock Prompt */}
+        {isOwnerMode ? (
           <div className="bg-[#2C2420] text-white px-5 py-3 rounded-t-3xl flex items-center justify-between gap-3 text-xs border-b border-[#DEC89B]/30">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
@@ -204,6 +214,13 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                 <span>{isEditing ? 'Cancel Edit' : 'Edit Details & Photo'}</span>
               </button>
             </div>
+          </div>
+        ) : (
+          <div className="bg-[#FAF7F2] border-b border-[#EAE2D5] px-5 py-2.5 flex items-center justify-between text-xs rounded-t-3xl">
+            <span className="text-[11px] font-medium text-[#7A6458] flex items-center gap-1.5">
+              <Sparkles className="w-3 h-3 text-[#C29E57]" />
+              <span>Cotton Nest Atelier · Sector 46 Gurgaon · 100% Pure Combed Cotton</span>
+            </span>
           </div>
         )}
 
@@ -381,7 +398,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                   </div>
                 </div>
 
-                {/* Fabric & Badge */}
+                {/* Fabric Material & Pillow Covers */}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-[10px] font-semibold text-[#8C7A70] uppercase tracking-wider block mb-1">
@@ -397,16 +414,30 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                   </div>
                   <div>
                     <label className="text-[10px] font-semibold text-[#8C7A70] uppercase tracking-wider block mb-1">
-                      Badge / Tag
+                      Pillow Covers
                     </label>
                     <input
                       type="text"
-                      value={editBadge}
-                      onChange={(e) => setEditBadge(e.target.value)}
-                      placeholder="e.g. Best Seller, 108x108 Pack"
+                      value={editPillowCovers}
+                      onChange={(e) => setEditPillowCovers(e.target.value)}
+                      placeholder="2 Pillow Covers (45x70 cm)"
                       className="w-full px-3 py-1.5 bg-white border border-[#EAE2D5] rounded-xl text-xs text-[#2C2420] focus:outline-hidden focus:border-[#C29E57]"
                     />
                   </div>
+                </div>
+
+                {/* Badge / Tag */}
+                <div>
+                  <label className="text-[10px] font-semibold text-[#8C7A70] uppercase tracking-wider block mb-1">
+                    Badge / Highlight Tag
+                  </label>
+                  <input
+                    type="text"
+                    value={editBadge}
+                    onChange={(e) => setEditBadge(e.target.value)}
+                    placeholder="e.g. Best Seller, 108x108 Pack"
+                    className="w-full px-3 py-1.5 bg-white border border-[#EAE2D5] rounded-xl text-xs text-[#2C2420] focus:outline-hidden focus:border-[#C29E57]"
+                  />
                 </div>
 
                 {/* In Stock Toggle & Stock Qty */}
@@ -512,6 +543,35 @@ export const ProductModal: React.FC<ProductModalProps> = ({
               <h2 className="font-serif-luxury text-2xl sm:text-3xl font-semibold text-[#2C2420] leading-snug">
                 {product.name}
               </h2>
+
+              {/* Customer Rating & Review Counter */}
+              <div className="flex items-center gap-2 pt-0.5">
+                <div className="flex items-center text-amber-500">
+                  {[1, 2, 3, 4, 5].map((s) => (
+                    <Star
+                      key={s}
+                      className={`w-4 h-4 ${
+                        s <= Math.round(productRating.average)
+                          ? 'fill-amber-400 text-amber-400'
+                          : 'text-[#DCD0C0]'
+                      }`}
+                    />
+                  ))}
+                </div>
+                <span className="font-bold text-xs text-[#2C2420]">{productRating.average}</span>
+                <span className="text-[11px] text-[#7A6458]">
+                  ({productRating.count} verified reviews)
+                </span>
+                {onOpenWriteReview && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenWriteReview(product.id)}
+                    className="ml-auto text-xs text-[#8C2E46] hover:underline font-semibold cursor-pointer flex items-center gap-1"
+                  >
+                    <span>Write Review ✍️</span>
+                  </button>
+                )}
+              </div>
 
               {/* Price & Savings */}
               <div className="space-y-2">
@@ -650,6 +710,66 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                     <span><strong>Care:</strong> Machine wash cold, gentle cycle, tumble dry low</span>
                   </li>
                 </ul>
+              </div>
+
+              {/* Verified Customer Reviews for this Bedsheet */}
+              <div className="space-y-2.5 pt-3 border-t border-[#EAE2D5]">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-[#2C2420] uppercase tracking-wider flex items-center gap-1.5">
+                    <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-400" />
+                    Customer Reviews ({productRating.reviews.length})
+                  </span>
+                  {onOpenWriteReview && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenWriteReview(product.id)}
+                      className="text-[11px] font-semibold text-[#8C2E46] hover:underline cursor-pointer"
+                    >
+                      + Write Review
+                    </button>
+                  )}
+                </div>
+
+                {productRating.reviews.length > 0 ? (
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                    {productRating.reviews.slice(0, 3).map((rev) => (
+                      <div key={rev.id} className="p-2.5 bg-[#FAF7F2] rounded-xl border border-[#EAE2D5] text-xs space-y-1">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center text-amber-400">
+                            {[1, 2, 3, 4, 5].map((s) => (
+                              <Star
+                                key={s}
+                                className={`w-3 h-3 ${s <= rev.rating ? 'fill-amber-400 text-amber-400' : 'text-[#DCD0C0]'}`}
+                              />
+                            ))}
+                          </div>
+                          <span className="text-[10px] text-[#3E7D5A] font-semibold flex items-center gap-0.5">
+                            <ShieldCheck className="w-3 h-3" /> Verified Buyer
+                          </span>
+                        </div>
+                        <p className="font-semibold text-[#2C2420] text-[11px]">"{rev.title}"</p>
+                        <p className="text-[#6B5D55] text-[11px] leading-relaxed line-clamp-2">{rev.comment}</p>
+                        <div className="text-[10px] text-[#9B8C83] pt-0.5 flex items-center justify-between">
+                          <span>{rev.customerName} · {rev.customerCity}</span>
+                          <span>{new Date(rev.createdAt).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-3 bg-[#FAF7F2] rounded-xl border border-[#EAE2D5] text-xs text-center text-[#7A6458]">
+                    <p>Be the first verified customer to review this bedsheet!</p>
+                    {onOpenWriteReview && (
+                      <button
+                        type="button"
+                        onClick={() => onOpenWriteReview(product.id)}
+                        className="mt-1.5 px-3 py-1 bg-[#8C2E46] text-white rounded-lg text-xs font-semibold cursor-pointer"
+                      >
+                        Share Your Feedback
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Quantity Selector & Stock Info */}

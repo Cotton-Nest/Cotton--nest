@@ -53,6 +53,13 @@ import { motion, useScroll, useSpring, AnimatePresence } from 'motion/react';
 export default function App() {
   const [activeTab, setActiveTab] = useState<'home' | 'catalogue' | 'story' | 'store' | 'orders' | 'tc'>('home');
   const [selectedProduct, setSelectedProduct] = useState<BedsheetProduct | null>(null);
+  const [isProductModalEditMode, setIsProductModalEditMode] = useState<boolean>(false);
+
+  const handleOpenProductModal = (product: BedsheetProduct, editMode: boolean = false) => {
+    setSelectedProduct(product);
+    setIsProductModalEditMode(editMode);
+  };
+
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isPhotoManagerOpen, setIsPhotoManagerOpen] = useState(false);
   const [isAdminOpen, setIsAdminOpen] = useState(false);
@@ -235,10 +242,7 @@ export default function App() {
       const cloudTime = Math.max(...cloudProducts.map((p) => p.updatedAt || 0), Date.now());
       savePersistentProducts(formatted, cloudTime).catch(() => {});
       try {
-        const lightweight = formatted.map((p) =>
-          p.image?.startsWith('data:') ? { ...p, image: `/photo/${p.id}.jpg` } : p
-        );
-        localStorage.setItem('cotton_nest_products', JSON.stringify(lightweight));
+        localStorage.setItem('cotton_nest_products', JSON.stringify(formatted));
         localStorage.setItem('cotton_nest_products_updated_at', String(cloudTime));
       } catch {}
     });
@@ -280,16 +284,10 @@ export default function App() {
             ? Math.max(...cloudProducts.map((p: any) => p.updatedAt || 0), 0)
             : 0;
 
-          // Primary preference to Firebase Firestore!
-          let authoritative = (cloudProducts && cloudProducts.length > 0)
+          // Primary preference strictly to Firebase Firestore Cloud Database!
+          const authoritative = (cloudProducts && cloudProducts.length > 0)
             ? cloudProducts
-            : serverProducts;
-
-          // If local server has newer offline changes, propagate up to Firestore
-          if (serverProducts && serverProducts.length > 0 && serverTime > cloudTime) {
-            authoritative = serverProducts;
-            saveAllProductsToFirestore(serverProducts).catch(() => {});
-          }
+            : (serverProducts && serverProducts.length > 0 ? serverProducts : null);
 
           if (authoritative && authoritative.length > 0) {
             const orderMap = new Map(BEDSHEETS_CATALOG.map((p, idx) => [p.id, idx]));
@@ -784,12 +782,13 @@ export default function App() {
                         >
                           <ProductCard
                             product={product}
-                            onQuickView={setSelectedProduct}
+                            onQuickView={(p, editMode) => handleOpenProductModal(p, editMode)}
                             onAddToCart={(p) => handleAddToCart(p, 1)}
                             isAdded={addedProductIds.has(product.id)}
                             customImage={customImages[product.id]}
                             onUploadImage={handleUploadImage}
                             isOwnerMode={isOwnerMode}
+                            onOpenOwnerAuth={() => setIsOwnerAuthOpen(true)}
                           />
                         </motion.div>
                       ))}
@@ -836,7 +835,7 @@ export default function App() {
             {activeTab === 'catalogue' && (
               <CatalogueView
                 products={products}
-                onQuickView={setSelectedProduct}
+                onQuickView={(p, editMode) => handleOpenProductModal(p, editMode)}
                 onAddToCart={(p) => handleAddToCart(p, 1)}
                 addedProductIds={addedProductIds}
                 customImages={customImages}
@@ -844,6 +843,7 @@ export default function App() {
                 onOpenPhotoManager={handleOpenPhotoManagerSafely}
                 onOpenAdmin={handleOpenAdminSafely}
                 isOwnerMode={isOwnerMode}
+                onOpenOwnerAuth={() => setIsOwnerAuthOpen(true)}
               />
             )}
 
@@ -888,12 +888,17 @@ export default function App() {
           {/* Global Product Detail Modal */}
           <ProductModal
             product={selectedProduct}
-            onClose={() => setSelectedProduct(null)}
+            onClose={() => {
+              setSelectedProduct(null);
+              setIsProductModalEditMode(false);
+            }}
             onAddToCart={handleAddToCart}
             customImage={selectedProduct ? customImages[selectedProduct.id] : undefined}
             onUploadImage={handleUploadImage}
             onUpdateProduct={handleUpdateSingleProduct}
             isOwnerMode={isOwnerMode}
+            initialEditMode={isProductModalEditMode}
+            onOpenOwnerAuth={() => setIsOwnerAuthOpen(true)}
             onViewTermsAndConditions={() => {
               setActiveTab('tc');
               window.scrollTo({ top: 0, behavior: 'smooth' });

@@ -14,6 +14,7 @@ import firebaseConfig from '../firebase-applet-config.json';
 import { BedsheetProduct } from './data/products';
 import { Order } from './data/orders';
 import { SiteContent } from './data/siteContent';
+import { ProductReview } from './data/reviews';
 
 // Initialize Firebase App
 export const app = initializeApp(firebaseConfig);
@@ -199,6 +200,34 @@ export function subscribeToOrdersFromFirestore(
   }
 }
 
+// Real-time listener for Customer Reviews
+export function subscribeToReviewsFromFirestore(
+  onUpdate: (reviews: ProductReview[]) => void
+): () => void {
+  try {
+    const colRef = collection(db, 'reviews');
+    const unsubscribe = onSnapshot(
+      colRef,
+      (snap) => {
+        const items: ProductReview[] = [];
+        snap.forEach((d) => {
+          items.push(d.data() as ProductReview);
+        });
+        // Sort newest first
+        items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        onUpdate(items);
+      },
+      (err) => {
+        console.warn('Real-time reviews subscription warning:', err);
+      }
+    );
+    return unsubscribe;
+  } catch (err) {
+    console.warn('Failed to subscribe to reviews in Firestore:', err);
+    return () => {};
+  }
+}
+
 // Quota circuit-breaker: transient back-off if Firestore free daily write quota is hit
 // Clears any stale session storage blocks on load so Firebase works immediately
 try {
@@ -342,3 +371,47 @@ export async function saveSiteContentToFirestore(content: SiteContent): Promise<
     handleFirestoreError(err, 'saveSiteContentToFirestore');
   }
 }
+
+// 5. Customer Reviews Store
+export async function getReviewsFromFirestore(): Promise<ProductReview[] | null> {
+  if (isFirestoreQuotaExhausted()) return null;
+  try {
+    const colRef = collection(db, 'reviews');
+    const snap = await getDocs(colRef);
+    if (snap.empty) return null;
+    const items: ProductReview[] = [];
+    snap.forEach((d) => {
+      const data = d.data() as ProductReview;
+      if (data && data.id) {
+        items.push(data);
+      }
+    });
+    items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    return items.length > 0 ? items : null;
+  } catch (err) {
+    handleFirestoreError(err, 'getReviewsFromFirestore');
+    return null;
+  }
+}
+
+export async function saveReviewToFirestore(review: ProductReview): Promise<void> {
+  if (isFirestoreQuotaExhausted()) return;
+  try {
+    const sanitized = sanitizeForFirestore(review);
+    const docRef = doc(db, 'reviews', review.id);
+    await setDoc(docRef, sanitized, { merge: true });
+  } catch (err) {
+    handleFirestoreError(err, 'saveReviewToFirestore');
+  }
+}
+
+export async function deleteReviewFromFirestore(reviewId: string): Promise<void> {
+  if (isFirestoreQuotaExhausted()) return;
+  try {
+    const docRef = doc(db, 'reviews', reviewId);
+    await deleteDoc(docRef);
+  } catch (err) {
+    handleFirestoreError(err, 'deleteReviewFromFirestore');
+  }
+}
+

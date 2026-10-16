@@ -1,17 +1,20 @@
 import React, { useState } from 'react';
-import { ShoppingBag, Eye, MessageCircle, Check, Truck, RotateCcw } from 'lucide-react';
+import { ShoppingBag, Eye, MessageCircle, Check, Truck, RotateCcw, Star } from 'lucide-react';
 import { BedsheetProduct, BedsheetVariant, COMPANY_DETAILS } from '../data/products';
 import { sendWhatsAppProductOrder } from '../utils/whatsappOrder';
 import { resolveBedsheetImage, handleImageFallback } from '../utils/imageUrl';
+import { ProductReview, getProductRatingSummary } from '../data/reviews';
 
 interface ProductCardProps {
   product: BedsheetProduct;
-  onQuickView: (product: BedsheetProduct) => void;
+  onQuickView: (product: BedsheetProduct, editMode?: boolean) => void;
   onAddToCart: (product: BedsheetProduct, variant?: BedsheetVariant) => void;
   isAdded?: boolean;
   customImage?: string;
   onUploadImage?: (productId: string, dataUrl: string) => void;
   isOwnerMode?: boolean;
+  onOpenOwnerAuth?: () => void;
+  reviews?: ProductReview[];
 }
 
 export const ProductCard: React.FC<ProductCardProps> = ({
@@ -22,10 +25,13 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   customImage,
   onUploadImage,
   isOwnerMode = false,
+  onOpenOwnerAuth,
+  reviews = [],
 }) => {
   const [imageLoaded, setImageLoaded] = React.useState(false);
   const [selectedVariantId, setSelectedVariantId] = useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const ratingSummary = getProductRatingSummary(product.id, reviews);
 
   React.useEffect(() => {
     setSelectedVariantId(null);
@@ -102,10 +108,10 @@ export const ProductCard: React.FC<ProductCardProps> = ({
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                onQuickView(product);
+                onQuickView(product, true);
               }}
-              title="Edit Bedsheet Details & Photo (Owner Mode)"
-              className="p-1.5 bg-[#FAF7F2]/95 hover:bg-white text-[#8C2E46] rounded-lg border border-[#FAD1DC] shadow-xs text-[10px] font-semibold flex items-center gap-1 backdrop-blur-xs transition-colors"
+              title="Edit Bedsheet Details & Photo (Firebase)"
+              className="p-1.5 bg-[#FAF7F2]/95 hover:bg-white text-[#8C2E46] rounded-lg border border-[#FAD1DC] shadow-xs text-[10px] font-semibold flex items-center gap-1 backdrop-blur-xs transition-colors cursor-pointer"
             >
               <span>✏️ Edit</span>
             </button>
@@ -122,8 +128,8 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                 e.stopPropagation();
                 fileInputRef.current?.click();
               }}
-              title="Upload/Replace with your original photo from device (Owner only)"
-              className="p-1.5 bg-[#FAF7F2]/90 hover:bg-white text-[#6B5D55] hover:text-[#B83F60] rounded-lg border border-[#EAE2D5] shadow-xs text-[10px] flex items-center gap-1 backdrop-blur-xs transition-colors"
+              title="Upload/Replace with your original photo from device (Firebase)"
+              className="p-1.5 bg-[#FAF7F2]/90 hover:bg-white text-[#6B5D55] hover:text-[#B83F60] rounded-lg border border-[#EAE2D5] shadow-xs text-[10px] flex items-center gap-1 backdrop-blur-xs transition-colors cursor-pointer"
             >
               <span>📷 Photo</span>
             </button>
@@ -178,6 +184,15 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           <h3 className="font-serif-luxury text-lg sm:text-xl font-semibold text-[#2C2420] line-clamp-1 group-hover:text-[#B83F60] transition-colors">
             {product.name}
           </h3>
+
+          {/* Customer Reviews Rating */}
+          <div className="flex items-center gap-1.5 pt-1 text-xs">
+            <div className="flex items-center text-amber-500">
+              <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+            </div>
+            <span className="font-bold text-xs text-[#2C2420]">{ratingSummary.average}</span>
+            <span className="text-[11px] text-[#8C7A70]">({ratingSummary.count} verified reviews)</span>
+          </div>
 
           {/* Color Variants Swatches */}
           {product.variants && product.variants.length > 0 && (

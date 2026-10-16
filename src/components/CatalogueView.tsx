@@ -17,7 +17,7 @@ import { ProductCard } from './ProductCard';
 
 interface CatalogueViewProps {
   products?: BedsheetProduct[];
-  onQuickView: (product: BedsheetProduct) => void;
+  onQuickView: (product: BedsheetProduct, editMode?: boolean) => void;
   onAddToCart: (product: BedsheetProduct) => void;
   addedProductIds: Set<string>;
   customImages?: Record<string, string>;
@@ -25,6 +25,7 @@ interface CatalogueViewProps {
   onOpenPhotoManager?: () => void;
   onOpenAdmin?: () => void;
   isOwnerMode?: boolean;
+  onOpenOwnerAuth?: () => void;
 }
 
 // Parses search text in real-time to detect price expressions, material keywords, and names
@@ -78,6 +79,7 @@ export const CatalogueView: React.FC<CatalogueViewProps> = ({
   onOpenPhotoManager,
   onOpenAdmin,
   isOwnerMode = false,
+  onOpenOwnerAuth,
 }) => {
   const [searchQuery, setSearchQuery] = React.useState('');
   const [selectedFilter, setSelectedFilter] = React.useState<string>('all');
@@ -578,6 +580,7 @@ export const CatalogueView: React.FC<CatalogueViewProps> = ({
                 customImage={customImages[product.id]}
                 onUploadImage={onUploadImage}
                 isOwnerMode={isOwnerMode}
+                onOpenOwnerAuth={onOpenOwnerAuth}
               />
             ))}
           </div>
