@@ -20,6 +20,8 @@ export interface ProductReview {
   qualityAspects?: QualityAspects;
 }
 
+export type Review = ProductReview;
+
 export const INITIAL_REVIEWS: ProductReview[] = [
   {
     id: "rev-1",

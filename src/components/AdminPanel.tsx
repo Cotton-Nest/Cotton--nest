@@ -7,6 +7,13 @@ import {
 import { Order, OrderStatus } from '../data/orders';
 import { SiteContent, INITIAL_SITE_CONTENT } from '../data/siteContent';
 import { uploadImageApi, removeProduct } from '../services/api';
+import {
+  uploadToCloudinary,
+  deleteFromCloudinary,
+  isCloudinaryUrl,
+  checkCloudinaryConfig
+} from '../services/cloudinary';
+import { saveProductDetailsToFirestore, saveProductToFirestore } from '../firebase';
 import { resolveBedsheetImage, handleImageFallback } from '../utils/imageUrl';
 import { savePersistentImage } from '../utils/persistentStorage';
 import {
@@ -42,7 +49,11 @@ import {
   ChevronUp,
   Download,
   ShieldCheck,
-  X
+  X,
+  Cloud,
+  Loader2,
+  HelpCircle,
+  ExternalLink
 } from 'lucide-react';
 
 interface AdminPanelProps {
@@ -88,6 +99,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   // New variant draft form per product: { [productId]: { name: string; colorHex: string; image: string } }
   const [variantDrafts, setVariantDrafts] = useState<Record<string, { name: string; colorHex: string; image: string }>>({});
+
+  // Cloudinary image upload tracking & configuration status
+  const [replacingProductId, setReplacingProductId] = useState<string | null>(null);
+  const [cloudinaryStatus, setCloudinaryStatus] = useState<{ configured: boolean; cloudName?: string; error?: string } | null>(null);
+  const [isCloudinaryHelpModalOpen, setIsCloudinaryHelpModalOpen] = useState(false);
+  const [newProductFile, setNewProductFile] = useState<File | null>(null);
+
+  React.useEffect(() => {
+    checkCloudinaryConfig().then((status) => {
+      setCloudinaryStatus(status);
+    });
+  }, []);
 
   // New Bedsheet Modal State
   const [isAddProductModalOpen, setIsAddProductModalOpen] = useState(false);
@@ -334,22 +357,65 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     showToast('Bedsheet removed from store.');
   };
 
-  const handleImageFileChange = async (productId: string, file?: File) => {
+  const handleReplaceImage = async (productId: string, file?: File) => {
     if (!file) return;
+    const targetProduct = editableProducts.find((p) => p.id === productId);
+    if (!targetProduct) return;
+
+    const previousImage = targetProduct.image;
+    const previousPublicId = targetProduct.cloudinaryPublicId;
+
+    setReplacingProductId(productId);
+    showToast(`Uploading replacement image to Cloudinary for "${targetProduct.name}"...`);
+
     try {
-      showToast('Compressing & uploading photo...');
-      const serverUrl = await uploadImageApi(file, productId);
-      onUploadImage(productId, serverUrl);
-      const updated = editableProducts.map((p) => {
-        if (p.id === productId) return { ...p, image: serverUrl, updatedAt: Date.now() };
-        return p;
-      });
-      setEditableProducts(updated);
-      onUpdateProducts(updated);
-      showToast('Photo updated & permanently saved to Google Cloud Console!');
-    } catch (err) {
-      console.error('Failed to upload image:', err);
-      showToast('Failed to upload image');
+      // 1. Upload to Cloudinary via signed direct upload
+      const uploadResult = await uploadToCloudinary(file, productId);
+      const newUrl = uploadResult.url;
+      const newPublicId = uploadResult.public_id;
+
+      if (!newUrl) {
+        throw new Error('Upload succeeded but no image URL was returned.');
+      }
+
+      // 2. Immediately update Firestore for this single product record (preserving all other fields)
+      const updatedFields: Partial<BedsheetProduct> = {
+        image: newUrl,
+        cloudinaryPublicId: newPublicId,
+        updatedAt: Date.now(),
+      };
+
+      await saveProductDetailsToFirestore(productId, updatedFields);
+
+      // 3. Atomically update local editable state and parent state
+      const updatedProduct: BedsheetProduct = {
+        ...targetProduct,
+        ...updatedFields,
+      };
+
+      const updatedList = editableProducts.map((p) => (p.id === productId ? updatedProduct : p));
+      setEditableProducts(updatedList);
+      onUpdateProducts(updatedList);
+      onUploadImage(productId, newUrl);
+
+      showToast(`Image replaced & hosted on Cloudinary for "${targetProduct.name}"!`);
+
+      // 4. Safely cleanup previous Cloudinary asset ONLY after successful save
+      if (previousPublicId && previousPublicId !== newPublicId && isCloudinaryUrl(previousImage)) {
+        deleteFromCloudinary(previousPublicId).catch((delErr) => {
+          console.warn('Old image cleanup warning:', delErr);
+        });
+      }
+    } catch (err: any) {
+      console.error('Failed to replace image:', err);
+      // Retain previous image and show clear error message
+      alert(`Image Replacement Failed:\n${err.message || err}\n\nYour previous product image has been kept unchanged.`);
+      showToast('Image replacement failed. Previous image retained.');
+    } finally {
+      setReplacingProductId(null);
+      if (fileInputRefs.current[productId]) {
+        fileInputRefs.current[productId]!.value = '';
+      }
     }
   };
 
@@ -457,7 +523,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
-  const handleCreateNewProduct = (e: React.FormEvent) => {
+  const handleCreateNewProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newProduct.name?.trim()) {
       alert('Please enter a name for the new bedsheet.');
@@ -465,6 +531,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
 
     const createdId = `bedsheet-${Date.now().toString(36)}`;
+    let finalImageUrl = newProduct.image || '/images/exact_sheet1_pink_rose_1790997736396.jpg';
+    let assignedPublicId: string | undefined;
+
+    // If owner selected a new file from their device, upload directly to Cloudinary
+    if (newProductFile) {
+      showToast('Uploading bedsheet image to Cloudinary...');
+      try {
+        const uploadResult = await uploadToCloudinary(newProductFile, createdId);
+        finalImageUrl = uploadResult.url;
+        assignedPublicId = uploadResult.public_id;
+      } catch (uploadErr: any) {
+        console.error('Failed to upload image for new bedsheet:', uploadErr);
+        alert(`Cloudinary Upload Failed:\n${uploadErr.message || uploadErr}\n\nPlease verify your Cloudinary configuration.`);
+        return;
+      }
+    }
+
     const fullProduct: BedsheetProduct = {
       id: createdId,
       name: newProduct.name.trim(),
@@ -478,7 +561,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       pattern: newProduct.pattern || 'Botanical Jaal',
       colorTone: newProduct.colorTone || 'Ivory & Pastels',
       description: newProduct.description || 'Pristine 100% pure cotton bedsheet.',
-      image: newProduct.image || '/images/exact_sheet1_pink_rose_1790997736396.jpg',
+      image: finalImageUrl,
+      cloudinaryPublicId: assignedPublicId,
       variants: newProduct.variants || [],
       badge: newProduct.badge || 'New Arrival',
       inStock: newProduct.inStock ?? true,
@@ -488,14 +572,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         'Includes 2 matching pillow shams',
         '100% pure breathable cotton',
         'Machine wash tested'
-      ]
+      ],
+      updatedAt: Date.now(),
     };
+
+    // Save directly to Google Cloud Firestore
+    try {
+      await saveProductToFirestore(fullProduct);
+    } catch (fsErr) {
+      console.warn('Firestore new product save warning:', fsErr);
+    }
 
     const updated = [fullProduct, ...editableProducts];
     setEditableProducts(updated);
     onUpdateProducts(updated);
     setIsAddProductModalOpen(false);
-    showToast('New bedsheet added to store catalogue!');
+    setNewProductFile(null);
+    showToast(`"${fullProduct.name}" created with Cloudinary image & Firestore persistence!`);
   };
 
   const handleBulkDiscount = (discountPercent: number) => {
@@ -793,6 +886,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Cloudinary Status Indicator */}
+            {cloudinaryStatus?.configured ? (
+              <div className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-50 rounded-xl border border-emerald-200 text-xs font-semibold text-emerald-800">
+                <Cloud className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Cloudinary Connected</span>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setIsCloudinaryHelpModalOpen(true)}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 rounded-xl border border-amber-300 text-xs font-semibold text-amber-900 cursor-pointer transition-colors shadow-2xs"
+                title="Click to view Cloudinary environment setup guide"
+              >
+                <Cloud className="w-3.5 h-3.5 text-amber-600" />
+                <span>Cloudinary Setup</span>
+                <HelpCircle className="w-3 h-3 text-amber-700" />
+              </button>
+            )}
+
             {/* Auto-Save Status Indicator */}
             <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 bg-white rounded-xl border border-[#EAE2D5] text-xs font-medium">
               {saveStatus === 'saving' ? (
@@ -1096,22 +1208,48 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           </span>
                         </div>
 
-                        <div className="flex-1 space-y-1.5">
+                        <div className="flex-1 space-y-2">
                           <input
                             type="file"
                             ref={(el) => { fileInputRefs.current[product.id] = el; }}
-                            onChange={(e) => handleImageFileChange(product.id, e.target.files?.[0])}
+                            onChange={(e) => handleReplaceImage(product.id, e.target.files?.[0])}
                             accept="image/*"
                             className="hidden"
                           />
+
+                          {/* Primary Replace Image Action */}
                           <button
                             type="button"
+                            disabled={replacingProductId === product.id}
                             onClick={() => fileInputRefs.current[product.id]?.click()}
-                            className="w-full px-2.5 py-1.5 bg-white hover:bg-[#F4EFE6] text-[#2C2420] border border-[#DEC89B] rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                            className="w-full px-3 py-1.5 bg-[#8C2E46] hover:bg-[#732438] text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-xs disabled:opacity-60 disabled:cursor-not-allowed"
+                            title="Upload and host replacement photo on Cloudinary, updating Firestore immediately"
                           >
-                            <ImageIcon className="w-3.5 h-3.5 text-[#C29E57]" />
-                            <span>Change Photo</span>
+                            {replacingProductId === product.id ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                <span>Uploading...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Upload className="w-3.5 h-3.5" />
+                                <span>Replace Image</span>
+                              </>
+                            )}
                           </button>
+
+                          {/* Image Hosting Badge */}
+                          {isCloudinaryUrl(currentImg) ? (
+                            <div className="flex items-center gap-1 text-[10px] text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md justify-center font-medium">
+                              <Cloud className="w-3 h-3 text-emerald-600 shrink-0" />
+                              <span className="truncate">Cloudinary CDN</span>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1 text-[10px] text-[#7A6458] bg-white border border-[#EAE2D5] px-2 py-0.5 rounded-md justify-center">
+                              <ImageIcon className="w-3 h-3 text-[#C29E57] shrink-0" />
+                              <span className="truncate">Catalog Photo</span>
+                            </div>
+                          )}
 
                           <button
                             type="button"
@@ -2391,6 +2529,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     onChange={(e) => {
                       const file = e.target.files?.[0];
                       if (file) {
+                        setNewProductFile(file);
                         const reader = new FileReader();
                         reader.onload = () => {
                           if (typeof reader.result === 'string') {
@@ -2408,10 +2547,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     className="px-3 py-1.5 bg-white hover:bg-[#FAF7F2] text-[#2C2420] border border-[#DEC89B] rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer shadow-xs"
                   >
                     <Upload className="w-3.5 h-3.5 text-[#C29E57]" />
-                    <span>Choose Photo From Device</span>
+                    <span>{newProductFile ? 'Change Selected Photo' : 'Choose Photo From Device'}</span>
                   </button>
                   <p className="text-[10px] text-[#8C7A70]">
-                    Select any photo from your phone gallery or computer.
+                    {newProductFile ? (
+                      <span className="text-emerald-700 font-semibold flex items-center gap-1">
+                        <Check className="w-3 h-3 text-emerald-600" />
+                        "{newProductFile.name}" selected · Will upload to Cloudinary upon publishing.
+                      </span>
+                    ) : (
+                      'Select any photo from your phone gallery or computer.'
+                    )}
                   </p>
                 </div>
               </div>
@@ -2703,6 +2849,145 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               </div>
 
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* MODAL: CLOUDINARY CONFIGURATION GUIDE                    */}
+      {/* ======================================================== */}
+      {isCloudinaryHelpModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#2C2420]/70 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="fixed inset-0" onClick={() => setIsCloudinaryHelpModalOpen(false)} />
+
+          <div className="relative bg-[#FAF7F2] w-full max-w-xl rounded-3xl border border-[#EAE2D5] shadow-2xl p-6 sm:p-8 z-10 text-[#2C2420] max-h-[90vh] overflow-y-auto">
+            <button
+              onClick={() => setIsCloudinaryHelpModalOpen(false)}
+              className="absolute top-5 right-5 p-1.5 text-[#7A6458] hover:text-[#2C2420] rounded-full hover:bg-[#F4EFE6] transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-2xl bg-[#FDEAF0] text-[#8C2E46] flex items-center justify-center shrink-0">
+                <Cloud className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="font-serif-luxury text-xl font-bold text-[#2C2420]">
+                  Cloudinary Image Hosting Setup
+                </h3>
+                <p className="text-xs text-[#7A6458]">
+                  Permanent, high-speed CDN photography for Cotton Nest bedsheets
+                </p>
+              </div>
+            </div>
+
+            {/* Current Status Box */}
+            <div className={`p-4 rounded-2xl border mb-5 ${
+              cloudinaryStatus?.configured
+                ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+                : 'bg-amber-50/80 border-amber-200 text-amber-900'
+            }`}>
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold flex items-center gap-1.5">
+                  {cloudinaryStatus?.configured ? (
+                    <>
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      <span>Cloudinary Connected ({cloudinaryStatus.cloudName})</span>
+                    </>
+                  ) : (
+                    <>
+                      <AlertTriangle className="w-4 h-4 text-amber-600" />
+                      <span>Cloudinary Credentials Not Detected</span>
+                    </>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const st = await checkCloudinaryConfig();
+                    setCloudinaryStatus(st);
+                    showToast(st.configured ? 'Cloudinary connected!' : 'Credentials still not detected');
+                  }}
+                  className="px-2.5 py-1 text-[11px] bg-white border rounded-lg font-medium shadow-2xs hover:bg-[#FAF7F2] cursor-pointer"
+                >
+                  Check Status
+                </button>
+              </div>
+              {!cloudinaryStatus?.configured && (
+                <p className="text-[11px] text-amber-800 mt-2">
+                  Photos can be replaced once the 3 environment variables below are added to your hosting settings.
+                </p>
+              )}
+            </div>
+
+            {/* Instructions */}
+            <div className="space-y-4 text-xs text-[#4A3E38]">
+              <div>
+                <h4 className="font-bold text-[#2C2420] text-sm mb-1.5">
+                  Required Environment Variables
+                </h4>
+                <p className="text-[11px] text-[#7A6458] mb-2.5">
+                  Set these in your <strong>Vercel Project Settings &gt; Environment Variables</strong> (or server environment):
+                </p>
+
+                <div className="space-y-2 font-mono text-[11px]">
+                  <div className="p-2.5 bg-white rounded-xl border border-[#EAE2D5]">
+                    <div className="font-bold text-[#8C2E46]">CLOUDINARY_CLOUD_NAME</div>
+                    <div className="text-[10px] text-[#7A6458] font-sans mt-0.5">Your Cloudinary cloud name (e.g. "my-store-cloud")</div>
+                  </div>
+
+                  <div className="p-2.5 bg-white rounded-xl border border-[#EAE2D5]">
+                    <div className="font-bold text-[#8C2E46]">CLOUDINARY_API_KEY</div>
+                    <div className="text-[10px] text-[#7A6458] font-sans mt-0.5">Your 15-digit public API key</div>
+                  </div>
+
+                  <div className="p-2.5 bg-white rounded-xl border border-[#EAE2D5]">
+                    <div className="font-bold text-[#8C2E46]">CLOUDINARY_API_SECRET</div>
+                    <div className="text-[10px] text-[#7A6458] font-sans mt-0.5">
+                      Your private API secret (kept secure on server, never sent to browsers)
+                    </div>
+                  </div>
+                </div>
+
+                <p className="text-[10px] text-[#8C7A70] mt-2">
+                  Tip: You can alternatively provide a single <code className="font-bold text-[#2C2420]">CLOUDINARY_URL</code> (e.g. <code className="text-[#8C2E46]">cloudinary://API_KEY:API_SECRET@CLOUD_NAME</code>).
+                </p>
+              </div>
+
+              <div className="p-3.5 bg-[#F4EFE6] rounded-2xl border border-[#EAE2D5] space-y-1.5 text-[11px]">
+                <div className="font-bold text-[#2C2420] flex items-center gap-1">
+                  <ShieldCheck className="w-3.5 h-3.5 text-[#C29E57]" />
+                  <span>Security &amp; Architecture Highlights</span>
+                </div>
+                <ul className="list-disc pl-4 space-y-1 text-[#6B5D55]">
+                  <li><strong>Signed Direct Uploads:</strong> Photos upload straight to Cloudinary CDN with temporary HMAC signatures signed on the server.</li>
+                  <li><strong>Zero Secrets in Browser:</strong> The API Secret is never exposed to public JavaScript or HTML.</li>
+                  <li><strong>Firestore Persistence:</strong> Only lightweight HTTPS URLs are stored in Firestore, eliminating 1MB document quota blocks.</li>
+                  <li><strong>Instant Cross-Device Sync:</strong> Changes reflect in real-time across phones, tablets, and computers.</li>
+                </ul>
+              </div>
+            </div>
+
+            <div className="mt-6 pt-4 border-t border-[#EAE2D5] flex items-center justify-between">
+              <a
+                href="https://cloudinary.com/console"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 text-xs text-[#8C2E46] font-semibold hover:underline"
+              >
+                <span>Open Cloudinary Console</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+
+              <button
+                type="button"
+                onClick={() => setIsCloudinaryHelpModalOpen(false)}
+                className="px-5 py-2 bg-[#2C2420] hover:bg-[#433731] text-white text-xs font-semibold rounded-xl cursor-pointer"
+              >
+                Got It
+              </button>
+            </div>
           </div>
         </div>
       )}

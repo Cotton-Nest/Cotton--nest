@@ -26,6 +26,7 @@ export interface BedsheetProduct {
   features: string[];
   order?: number;
   updatedAt?: number;
+  cloudinaryPublicId?: string;
 }
 
 export const COMPANY_DETAILS = {

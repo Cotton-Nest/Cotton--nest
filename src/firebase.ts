@@ -283,6 +283,24 @@ export async function saveProductToFirestore(product: BedsheetProduct): Promise<
   }
 }
 
+export async function saveProductDetailsToFirestore(
+  productId: string,
+  updates: Partial<BedsheetProduct>
+): Promise<void> {
+  if (isFirestoreQuotaExhausted()) return;
+  try {
+    const clean = {
+      ...updates,
+      updatedAt: updates.updatedAt || Date.now(),
+    };
+    const sanitized = sanitizeForFirestore(clean);
+    const docRef = doc(db, 'products', productId);
+    await setDoc(docRef, sanitized, { merge: true });
+  } catch (err) {
+    handleFirestoreError(err, 'saveProductDetailsToFirestore');
+  }
+}
+
 export async function deleteProductFromFirestore(productId: string): Promise<void> {
   if (isFirestoreQuotaExhausted()) return;
   try {

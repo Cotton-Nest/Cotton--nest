@@ -27,6 +27,16 @@ import {
   saveSiteContentToFirestore
 } from '../firebase';
 
+import { uploadToCloudinary, deleteFromCloudinary, isCloudinaryUrl } from './cloudinary';
+
+// Cloudinary & Firestore service exports
+export {
+  uploadToCloudinary,
+  deleteFromCloudinary,
+  isCloudinaryUrl,
+  checkCloudinaryConfig
+} from './cloudinary';
+
 // Direct Firebase Store scratch helpers
 export {
   fetchProductsFromFirestore,
@@ -38,42 +48,39 @@ export {
   subscribeToProductsRealtime
 } from './firebaseStore';
 
-// Upload Image API: Compresses image and persists directly to Firebase Firestore and IndexedDB
+// Upload Image API: Uploads image to Cloudinary and persists permanent HTTPS URL to Firebase Firestore
 export async function uploadImageApi(imageInput: string | File, productId?: string): Promise<string> {
-  try {
-    // If it's already an existing data URL or remote URL, use as is
-    if (typeof imageInput === 'string' && (imageInput.startsWith('data:image/') || imageInput.startsWith('http://') || imageInput.startsWith('https://'))) {
-      if (productId) {
-        saveImageToFirestore(productId, imageInput).catch(() => {});
-        savePersistentImage(productId, imageInput).catch(() => {});
-      }
-      return imageInput;
+  // 1. If already hosted on Cloudinary, update Firestore if needed and return
+  if (typeof imageInput === 'string' && isCloudinaryUrl(imageInput)) {
+    if (productId) {
+      saveImageToFirestore(productId, imageInput).catch(() => {});
+      savePersistentImage(productId, imageInput).catch(() => {});
     }
-
-    // 1. Compress image client-side to lightweight JPEG (~70KB-120KB)
-    // Storing the self-contained data URL ensures photos NEVER 404 across devices, phones, or server restarts!
-    const compressed = await compressImage(imageInput, 1280, 1280, 0.82);
-
-    // 2. Primary cloud storage: Store permanently in Google Cloud Firestore & IndexedDB
-    // Giving strict preference to Firebase ensures all devices receive this photo instantly
-    if (productId && compressed) {
-      await saveImageToFirestore(productId, compressed).catch(() => {});
-      savePersistentImage(productId, compressed).catch(() => {});
-    }
-
-    // 3. Background server disk backup copy (non-blocking)
-    fetch('/api/upload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: compressed }),
-    }).catch(() => {});
-
-    return compressed;
-  } catch (err) {
-    console.warn('Upload API failed, falling back:', err);
-    if (typeof imageInput === 'string') return imageInput;
-    return await compressImage(imageInput, 1280, 1280, 0.82);
+    return imageInput;
   }
+
+  // 2. Upload to Cloudinary hosting via signed direct upload
+  const uploadResult = await uploadToCloudinary(imageInput, productId);
+  const cloudUrl = uploadResult.url;
+  const publicId = uploadResult.public_id;
+
+  // 3. Immediately persist the permanent Cloudinary HTTPS URL to Google Cloud Firestore
+  if (productId && cloudUrl) {
+    try {
+      await saveImageToFirestore(productId, cloudUrl);
+      await saveProductToFirestore({
+        id: productId,
+        image: cloudUrl,
+        cloudinaryPublicId: publicId,
+        updatedAt: Date.now(),
+      } as BedsheetProduct);
+    } catch (dbErr) {
+      console.warn('Firestore sync warning after Cloudinary upload:', dbErr);
+    }
+    savePersistentImage(productId, cloudUrl).catch(() => {});
+  }
+
+  return cloudUrl;
 }
 
 // Products API: Loads authoritative data giving direct preference to Google Cloud Firestore

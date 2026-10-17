@@ -13,6 +13,7 @@ import { Review, INITIAL_REVIEWS } from '../data/reviews';
 import { compressImage } from '../utils/imageCompressor';
 import { resolveBedsheetImage } from '../utils/imageUrl';
 import { savePersistentProducts, savePersistentImage, getAllPersistentImages } from '../utils/persistentStorage';
+import { uploadToCloudinary } from './cloudinary';
 
 /**
  * Universal Sanitizer: strips any undefined fields so Firestore setDoc never throws
@@ -129,44 +130,46 @@ export async function uploadAndSaveProductImage(
   productId: string,
   imageInput: File | string
 ): Promise<string> {
-  // Compress client-side to lightweight JPEG with 1080px max dimension and 0.80 quality
-  const compressedDataUrl = await compressImage(imageInput, 1080, 1080, 0.80);
+  // 1. Upload to Cloudinary hosting (signed direct upload)
+  const uploadResult = await uploadToCloudinary(imageInput, productId);
+  const cloudUrl = uploadResult.url;
+  const publicId = uploadResult.public_id;
   const now = Date.now();
 
   try {
-    // 1. Save to custom_images in Firestore
+    // 2. Save permanent HTTPS URL into custom_images in Firestore
     const imgDocRef = doc(db, 'custom_images', productId);
-    await setDoc(imgDocRef, {
-      productId,
-      imageUrl: compressedDataUrl,
-      updatedAt: new Date().toISOString(),
-    });
+    await setDoc(
+      imgDocRef,
+      {
+        productId,
+        imageUrl: cloudUrl,
+        public_id: publicId || null,
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
 
-    // 2. Directly update the product document in Firestore
+    // 3. Directly update the product document in Firestore with Cloudinary URL
     const prodDocRef = doc(db, 'products', productId);
     await setDoc(
       prodDocRef,
       {
-        image: compressedDataUrl,
+        image: cloudUrl,
+        cloudinaryPublicId: publicId || null,
         updatedAt: now,
       },
       { merge: true }
     );
   } catch (err) {
-    console.warn('Firestore image upload warning:', err);
+    console.warn('Firestore image update warning:', err);
+    throw new Error('Image uploaded to Cloudinary, but failed to update Firestore product record.');
   }
 
-  // 3. Save to local permanent IndexedDB & memory
-  savePersistentImage(productId, compressedDataUrl).catch(() => {});
+  // 4. Mirror to local persistent cache
+  savePersistentImage(productId, cloudUrl).catch(() => {});
 
-  // 4. Background disk backup
-  fetch('/api/upload', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ image: compressedDataUrl }),
-  }).catch(() => {});
-
-  return compressedDataUrl;
+  return cloudUrl;
 }
 
 /**

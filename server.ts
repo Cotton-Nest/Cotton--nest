@@ -2,6 +2,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { v2 as cloudinary } from 'cloudinary';
 import { BEDSHEETS_CATALOG } from './src/data/products.ts';
 import { INITIAL_ORDERS } from './src/data/orders.ts';
 import { INITIAL_SITE_CONTENT } from './src/data/siteContent.ts';
@@ -184,37 +185,167 @@ async function startServer() {
     res.json({ appUrl: publicUrl });
   });
 
-  // Dedicated image upload API that converts base64 to static disk file
-  app.post('/api/upload', (req, res) => {
+  function initCloudinary() {
+    let cloudName = process.env.CLOUDINARY_CLOUD_NAME || process.env.CLOUDINARY_NAME || process.env.VITE_CLOUDINARY_CLOUD_NAME;
+    let apiKey = process.env.CLOUDINARY_API_KEY || process.env.VITE_CLOUDINARY_API_KEY;
+    let apiSecret = process.env.CLOUDINARY_API_SECRET;
+    const cloudinaryUrl = process.env.CLOUDINARY_URL;
+
+    if (cloudinaryUrl) {
+      const match = cloudinaryUrl.match(/cloudinary:\/\/([^:]+):([^@]+)@(.+)/);
+      if (match) {
+        apiKey = apiKey || match[1];
+        apiSecret = apiSecret || match[2];
+        cloudName = cloudName || match[3];
+      }
+    }
+
+    if (cloudName && apiKey && apiSecret) {
+      cloudinary.config({
+        cloud_name: cloudName,
+        api_key: apiKey,
+        api_secret: apiSecret,
+        secure: true,
+      });
+      return { cloudName, apiKey, apiSecret };
+    }
+
+    return null;
+  }
+
+  // Cloudinary Signature generation for secure signed direct uploads (GET and POST)
+  app.all('/api/cloudinary-sign', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     try {
-      const { image } = req.body;
+      const config = initCloudinary();
+
+      if (!config || !config.cloudName || !config.apiKey || !config.apiSecret) {
+        return res.status(503).json({
+          configured: false,
+          error: 'Cloudinary credentials are not configured on server.',
+          help: 'Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET (or CLOUDINARY_URL) environment variables.',
+        });
+      }
+
+      const query = req.query || {};
+      const body = req.body || {};
+      const productId = (query.productId || body.productId || '').trim();
+      const explicitPublicId = (query.public_id || body.public_id || '').trim();
+
+      const timestamp = Math.round(new Date().getTime() / 1000);
+      const folder = 'cotton_nest/bedsheets';
+
+      const paramsToSign: Record<string, any> = {
+        folder,
+        timestamp,
+      };
+
+      let assignedPublicId: string | undefined;
+      if (explicitPublicId) {
+        assignedPublicId = explicitPublicId;
+        paramsToSign.public_id = assignedPublicId;
+      } else if (productId) {
+        const sanitizedId = productId.replace(/[^a-zA-Z0-9-_]/g, '_');
+        assignedPublicId = `sheet_${sanitizedId}_${timestamp}`;
+        paramsToSign.public_id = assignedPublicId;
+      }
+
+      const signature = cloudinary.utils.api_sign_request(paramsToSign, config.apiSecret);
+
+      res.json({
+        configured: true,
+        timestamp,
+        signature,
+        apiKey: config.apiKey,
+        cloudName: config.cloudName,
+        folder,
+        public_id: assignedPublicId,
+      });
+    } catch (err: any) {
+      console.error('Failed to generate Cloudinary signature:', err);
+      res.status(500).json({ error: err.message || 'Failed to generate signature' });
+    }
+  });
+
+  // Dedicated image upload API with primary Cloudinary support
+  app.post('/api/upload', async (req, res) => {
+    try {
+      const { image, productId, public_id } = req.body || {};
       if (!image || typeof image !== 'string') {
         return res.status(400).json({ error: 'Image data is required' });
       }
 
-      if (image.startsWith('/uploads/') || image.startsWith('http://') || image.startsWith('https://')) {
-        return res.json({ url: image });
+      // If already a Cloudinary URL or remote HTTPS URL, return directly
+      if (image.startsWith('https://res.cloudinary.com/')) {
+        return res.json({ url: image, provider: 'cloudinary' });
       }
 
-      // Parse data URL: data:image/jpeg;base64,...
-      const matches = image.match(/^data:image\/([a-zA-Z0-9+]+);base64,(.+)$/);
-      let ext = 'jpg';
-      let base64Data = image;
-
-      if (matches) {
-        ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
-        base64Data = matches[2];
+      // Upload to Cloudinary
+      const config = initCloudinary();
+      if (!config) {
+        return res.status(503).json({
+          configured: false,
+          error: 'Cloudinary credentials are not configured on server.',
+          help: 'Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET (or CLOUDINARY_URL) in environment variables.',
+        });
       }
 
-      const filename = `sheet_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${ext}`;
-      const filePath = path.join(UPLOADS_DIR, filename);
+      const uploadOptions: any = {
+        folder: 'cotton_nest/bedsheets',
+        resource_type: 'image',
+        overwrite: true,
+        tags: ['cotton_nest', productId ? `product_${productId}` : 'general_sheet'],
+        transformation: [
+          { quality: 'auto:good' },
+          { fetch_format: 'auto' }
+        ]
+      };
 
-      fs.writeFileSync(filePath, Buffer.from(base64Data, 'base64'));
-      const publicUrl = `/uploads/${filename}`;
-      res.json({ url: publicUrl });
+      if (public_id) {
+        uploadOptions.public_id = public_id;
+      } else if (productId) {
+        const sanitized = productId.replace(/[^a-zA-Z0-9-_]/g, '_');
+        uploadOptions.public_id = `sheet_${sanitized}_${Date.now()}`;
+      }
+
+      const result = await cloudinary.uploader.upload(image, uploadOptions);
+      return res.json({
+        url: result.secure_url,
+        public_id: result.public_id,
+        provider: 'cloudinary',
+        width: result.width,
+        height: result.height,
+        format: result.format,
+      });
     } catch (err: any) {
-      console.error('Failed to process image upload:', err);
-      res.status(500).json({ error: 'Failed to save image' });
+      console.error('Failed to process image upload to Cloudinary:', err);
+      res.status(500).json({ error: err.message || 'Failed to save image to Cloudinary' });
+    }
+  });
+
+  // Secure deletion endpoint for old Cloudinary images (keeps secret on server)
+  app.post('/api/cloudinary-delete', async (req, res) => {
+    try {
+      const { public_id } = req.body || {};
+      if (!public_id || typeof public_id !== 'string') {
+        return res.status(400).json({ error: 'public_id is required' });
+      }
+
+      // Security check: only allow deletion within store folders
+      if (!public_id.includes('cotton_nest') && !public_id.startsWith('sheet_')) {
+        return res.status(403).json({ error: 'Cannot delete assets outside store folder' });
+      }
+
+      const config = initCloudinary();
+      if (!config) {
+        return res.status(503).json({ error: 'Cloudinary not configured' });
+      }
+
+      const result = await cloudinary.uploader.destroy(public_id);
+      res.json({ success: true, result });
+    } catch (err: any) {
+      console.error('Failed to delete Cloudinary asset:', err);
+      res.status(500).json({ error: 'Failed to delete asset' });
     }
   });
 

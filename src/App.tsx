@@ -326,35 +326,14 @@ export default function App() {
 
     loadDataFromServer();
 
-    // When returning to tab or opening on phone, immediately refresh data
+    // When returning to tab or opening on phone, refresh data cleanly
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && isMounted) {
+      if (document.visibilityState === 'visible' && isMounted && !isAdminOpenRef.current) {
         loadDataFromServer();
       }
     };
 
     window.addEventListener('visibilitychange', handleVisibilityChange);
-
-    // Background interval: Polls server to catch edits made on PC within seconds (4s for instant mobile sync)
-    const interval = setInterval(() => {
-      if (document.visibilityState === 'visible' && isMounted && !isAdminOpenRef.current) {
-        fetch(`/api/sync-check?t=${Date.now()}`, { cache: 'no-store' })
-          .then((r) => r.json())
-          .then((sync) => {
-            if (sync && typeof sync.timestamp === 'number') {
-              const currentTimestamp = Math.max(...productsRef.current.map((p) => p.updatedAt || 0), 0);
-              if (sync.timestamp > currentTimestamp) {
-                loadDataFromServer();
-              }
-            }
-          })
-          .catch(() => {});
-
-        getOrders().then((o) => {
-          if (o && isMounted) setOrders(o);
-        }).catch(() => {});
-      }
-    }, 4000);
 
     return () => {
       isMounted = false;
@@ -363,7 +342,6 @@ export default function App() {
       unsubContent();
       unsubOrders();
       window.removeEventListener('visibilitychange', handleVisibilityChange);
-      clearInterval(interval);
     };
   }, []);
 
@@ -534,13 +512,11 @@ export default function App() {
     try {
       const finalUrl = await uploadImageApi(fileOrDataUrl, productId);
 
-      // 1. Permanently persist to Google Cloud Firestore (Console Cloud Database, cross-device sync)
+      // 1. Permanently persist to Google Cloud Firestore & IndexedDB
       await saveImageToFirestore(productId, finalUrl);
-
-      // 2. Immediately persist to IndexedDB (permanent client database, GBs quota, never resets)
       await savePersistentImage(productId, finalUrl);
 
-      // 3. Update state and attempt localStorage cache
+      // 2. Update state and attempt localStorage cache
       setCustomImages((prev) => {
         const updated = { ...prev, [productId]: finalUrl };
         try {
@@ -551,10 +527,13 @@ export default function App() {
         return updated;
       });
 
-      // 4. Update products and sync
+      // 3. Update products locally without rewriting every other product in the database
       setProducts((prev) => {
         const updated = prev.map((p) => (p.id === productId ? { ...p, image: finalUrl, updatedAt: Date.now() } : p));
-        saveAllProducts(updated);
+        savePersistentProducts(updated, Date.now()).catch(() => {});
+        try {
+          localStorage.setItem('cotton_nest_products', JSON.stringify(updated));
+        } catch {}
         return updated;
       });
     } catch (err) {

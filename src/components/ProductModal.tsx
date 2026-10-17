@@ -1,9 +1,10 @@
 import React from 'react';
-import { X, Check, MessageCircle, ShoppingBag, ShieldCheck, Truck, RotateCcw, MapPin, Sparkles, Edit3, Save, ImageIcon, Cloud, Loader2, Star, ThumbsUp } from 'lucide-react';
+import { X, Check, MessageCircle, ShoppingBag, ShieldCheck, Truck, RotateCcw, MapPin, Sparkles, Edit3, Save, ImageIcon, Cloud, Loader2, Star, ThumbsUp, Upload } from 'lucide-react';
 import { BedsheetProduct, BedsheetVariant, COMPANY_DETAILS } from '../data/products';
 import { sendWhatsAppProductOrder } from '../utils/whatsappOrder';
 import { resolveBedsheetImage, handleImageFallback } from '../utils/imageUrl';
-import { saveProductDetailsToFirestore, uploadAndSaveProductImage } from '../services/firebaseStore';
+import { saveProductDetailsToFirestore } from '../services/firebaseStore';
+import { uploadToCloudinary, deleteFromCloudinary, isCloudinaryUrl } from '../services/cloudinary';
 import { ProductReview, getProductRatingSummary } from '../data/reviews';
 
 interface ProductModalProps {
@@ -135,23 +136,54 @@ export const ProductModal: React.FC<ProductModalProps> = ({
   const handlePhotoUploadDirect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !product) return;
+
+    const previousImage = product.image;
+    const previousPublicId = product.cloudinaryPublicId;
+
     setIsSaving(true);
-    setSaveSuccessMessage('Uploading photo to Firebase...');
+    setSaveSuccessMessage('Uploading replacement to Cloudinary...');
     try {
-      const newUrl = await uploadAndSaveProductImage(product.id, file);
+      // 1. Upload to Cloudinary via signed direct upload
+      const uploadResult = await uploadToCloudinary(file, product.id);
+      const newUrl = uploadResult.url;
+      const newPublicId = uploadResult.public_id;
+
+      // 2. Save image and public_id to Firestore (preserving name, price, variants, etc.)
+      await saveProductDetailsToFirestore(product.id, {
+        image: newUrl,
+        cloudinaryPublicId: newPublicId,
+        updatedAt: Date.now(),
+      });
+
+      const updatedProduct: BedsheetProduct = {
+        ...product,
+        image: newUrl,
+        cloudinaryPublicId: newPublicId,
+        updatedAt: Date.now(),
+      };
+
       if (onUploadImage) {
         onUploadImage(product.id, newUrl);
       }
       if (onUpdateProduct) {
-        onUpdateProduct({ ...product, image: newUrl, updatedAt: Date.now() });
+        onUpdateProduct(updatedProduct);
       }
-      setSaveSuccessMessage('Photo saved to Firebase!');
+
+      setSaveSuccessMessage('Image replaced & hosted on Cloudinary!');
       setTimeout(() => setSaveSuccessMessage(null), 2500);
-    } catch (err) {
-      console.error('Failed to upload image:', err);
-      alert('Failed to upload photo to Firebase.');
+
+      // 3. Cleanup previous Cloudinary asset after successful save
+      if (previousPublicId && previousPublicId !== newPublicId && isCloudinaryUrl(previousImage)) {
+        deleteFromCloudinary(previousPublicId).catch(() => {});
+      }
+    } catch (err: any) {
+      console.error('Failed to upload image to Cloudinary:', err);
+      alert(`Image Replacement Failed:\n${err.message || err}\n\nPrevious image has been kept unchanged.`);
     } finally {
       setIsSaving(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     }
   };
 
@@ -250,9 +282,9 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                 </span>
               )}
 
-              {/* Upload photo button inside modal - only visible to store owners */}
+              {/* Replace image button inside modal - only visible to store owners */}
               {isOwnerMode && (
-                <div className="absolute bottom-3 right-3 z-10">
+                <div className="absolute bottom-3 right-3 z-10 flex items-center gap-1.5">
                   <input
                     type="file"
                     ref={fileInputRef}
@@ -260,13 +292,29 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                     accept="image/*"
                     className="hidden"
                   />
+                  {isCloudinaryUrl(displayImage) && (
+                    <span className="px-2 py-1 bg-emerald-900/80 backdrop-blur-xs text-white text-[10px] font-semibold rounded-lg flex items-center gap-1 shadow-xs">
+                      <Cloud className="w-3 h-3 text-emerald-300" />
+                      <span>Cloudinary</span>
+                    </span>
+                  )}
                   <button
                     type="button"
+                    disabled={isSaving}
                     onClick={() => fileInputRef.current?.click()}
-                    className="px-2.5 py-1.5 bg-[#FAF7F2]/95 hover:bg-white text-[#2C2420] text-xs font-semibold rounded-lg border border-[#DEC89B] shadow-xs backdrop-blur-xs flex items-center gap-1.5 cursor-pointer"
+                    className="px-2.5 py-1.5 bg-[#FAF7F2]/95 hover:bg-white text-[#2C2420] text-xs font-semibold rounded-lg border border-[#DEC89B] shadow-xs backdrop-blur-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
                   >
-                    <ImageIcon className="w-3.5 h-3.5 text-[#C29E57]" />
-                    <span>📷 Upload Photo (Firebase)</span>
+                    {isSaving ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Uploading...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="w-3.5 h-3.5 text-[#C29E57]" />
+                        <span>Replace Image</span>
+                      </>
+                    )}
                   </button>
                 </div>
               )}
