@@ -9,6 +9,7 @@ export interface ProductReview {
   productId: string;        // 'gulabi-bagh-rose' or 'all'
   productName: string;      // Name of the bedsheet
   customerName: string;     // e.g. "Pooja Sharma"
+  reviewerName?: string;    // alias for customerName
   customerCity: string;     // e.g. "Sector 57, Gurgaon"
   rating: number;           // 1 - 5 stars
   title: string;            // e.g. "Genuinely 108x108 inches, didn't shrink after wash"

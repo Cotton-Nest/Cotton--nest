@@ -1385,7 +1385,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                             <Truck className="w-3 h-3 text-[#B83F60]" />
                             <span>+ Shipping Extra:</span>
                           </span>
-                          <span className="text-[10px] text-[#7A6458]">₹100 India · Free in Sec 46 Gurgaon</span>
+                          <span className="text-[10px] text-[#7A6458]">₹29 India · Free in Sec 46 Gurgaon</span>
                         </div>
                       </div>
 

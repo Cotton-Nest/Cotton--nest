@@ -67,12 +67,12 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     0
   );
   const totalSavings = originalSubtotal - subtotal;
-  const shippingCost = shippingOption === 'india' ? 100 : 0;
+  const shippingCost = shippingOption === 'india' ? 29 : 0;
   const finalTotal = subtotal + shippingCost;
 
   const shippingLabel =
     shippingOption === 'india'
-      ? 'Across India (₹100)'
+      ? 'Across India (₹29)'
       : shippingOption === 'sector46'
       ? 'Sector 46, Gurgaon (Complimentary)'
       : 'Rest of Gurgaon (Self Pickup / On Actuals)';
@@ -346,7 +346,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                           <p className="text-[11px] text-[#7A6458]">Standard Courier Delivery</p>
                         </div>
                       </div>
-                      <span className="font-bold text-[#8C2E46]">+₹100</span>
+                      <span className="font-bold text-[#8C2E46]">+₹29</span>
                     </label>
 
                     <label

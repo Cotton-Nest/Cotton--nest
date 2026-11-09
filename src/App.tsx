@@ -51,7 +51,7 @@ import { ArrowRight, Sparkles, CheckCircle2, ShieldCheck, HeartHandshake, Phone,
 import { motion, useScroll, useSpring, AnimatePresence } from 'motion/react';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'home' | 'catalogue' | 'story' | 'store' | 'orders' | 'tc'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'catalogue' | 'story' | 'store' | 'orders' | 'tc' | 'reviews'>('home');
   const [selectedProduct, setSelectedProduct] = useState<BedsheetProduct | null>(null);
   const [isProductModalEditMode, setIsProductModalEditMode] = useState<boolean>(false);
 
@@ -207,6 +207,10 @@ export default function App() {
 
     getPersistentContent().then((idbContent) => {
       if (isMounted && idbContent && idbContent.company) {
+        if (!idbContent.termsAndConditions || !idbContent.termsAndConditions.includes('PRODUCT REPRESENTATION')) {
+          idbContent.termsAndConditions = INITIAL_SITE_CONTENT.termsAndConditions;
+          savePersistentContent(idbContent).catch(() => {});
+        }
         setSiteContent((curr) => (curr === INITIAL_SITE_CONTENT ? idbContent : curr));
       }
     }).catch(() => {});

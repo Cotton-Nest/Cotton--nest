@@ -321,8 +321,12 @@ export async function fetchReviewsFromFirestore(productId?: string): Promise<Rev
       const items: Review[] = [];
       snap.forEach((d) => {
         const data = d.data() as Review;
-        if (data && data.reviewerName) {
-          items.push({ ...data, id: d.id });
+        if (data && (data.customerName || data.reviewerName)) {
+          items.push({
+            ...data,
+            id: d.id,
+            customerName: data.customerName || data.reviewerName || 'Customer',
+          });
         }
       });
 
@@ -407,8 +411,12 @@ export function subscribeToReviewsRealtime(
           const items: Review[] = [];
           snap.forEach((d) => {
             const data = d.data() as Review;
-            if (data && data.reviewerName) {
-              items.push({ ...data, id: d.id });
+            if (data && (data.customerName || data.reviewerName)) {
+              items.push({
+                ...data,
+                id: d.id,
+                customerName: data.customerName || data.reviewerName || 'Customer',
+              });
             }
           });
 
