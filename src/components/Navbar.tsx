@@ -25,6 +25,7 @@ import { COMPANY_DETAILS } from '../data/products';
 import { SiteContent } from '../data/siteContent';
 import { useAuth } from '../context/AuthContext';
 import { getWishlist, onWishlistChange } from '../utils/wishlist';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface NavbarProps {
   activeTab: 'home' | 'catalogue' | 'story' | 'store' | 'orders' | 'tc' | 'reviews';
@@ -108,21 +109,24 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <>
-      {/* Subtle announcement bar */}
-      <aside aria-label="Announcement" className="bg-[#F4EFE6] border-b border-[#EAE2D5] text-[#7A6458] text-xs py-1.5 px-3 sm:px-4 text-center">
-        <div className="max-w-7xl mx-auto flex items-center justify-center gap-3">
+      {/* Subtle announcement bar with single PWA Install button */}
+      <aside aria-label="Announcement" className="bg-[#F4EFE6] border-b border-[#EAE2D5] text-[#7A6458] text-xs py-1.5 px-3 sm:px-4">
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
           <span className="flex items-center gap-1.5 font-medium truncate">
             <Sparkles className="w-3.5 h-3.5 text-[#C29E57] shrink-0" />
             <span className="truncate">{announcementText}</span>
           </span>
-          <span className="hidden md:inline text-[#DCD0C0]">|</span>
-          <a
-            href={`tel:${contactPhone.replace(/\s+/g, '')}`}
-            className="hidden md:inline-flex items-center gap-1 text-[#9E7B3B] hover:underline font-semibold shrink-0"
-          >
-            <Phone className="w-3 h-3" />
-            {contactPhone}
-          </a>
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            <PWAInstallButton variant="navbar" />
+            <span className="hidden md:inline text-[#DCD0C0]">|</span>
+            <a
+              href={`tel:${contactPhone.replace(/\s+/g, '')}`}
+              className="hidden md:inline-flex items-center gap-1 text-[#9E7B3B] hover:underline font-semibold shrink-0"
+            >
+              <Phone className="w-3 h-3" />
+              {contactPhone}
+            </a>
+          </div>
         </div>
       </aside>
 
