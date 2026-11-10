@@ -201,5 +201,17 @@ ________________________________________
 •• The maximum redemption limit applies to each individual order.
 •• Any unused Nest Points will remain in the customer's account for future purchases.
 •• Nest Points cannot be exchanged for cash or transferred to another account.
-•• Redemption is subject to sufficient available Nest Points in the customer's account.`,
+•• Redemption is subject to sufficient available Nest Points in the customer's account.
+
+Loyalty Points Redemption – Additional Terms & Conditions
+1. Nest Points can only be redeemed by the registered customer account to which they were originally credited.
+2. Points cannot be transferred, exchanged for cash, or redeemed outside the Cotton Nest website.
+3. Redemption is permitted only on eligible purchases and cannot be combined with any excluded promotional offers unless explicitly allowed by Cotton Nest.
+4. The maximum Nest Points redemption limit is 125 points per order.
+5. Customers must have sufficient available points at the time of checkout. Points already redeemed cannot be reused.
+6. Once an order is successfully placed using Nest Points, the redeemed points will be deducted from the customer's available balance.
+7. If an order is cancelled or refunded, the redeemed points will be returned to the customer's account, subject to order and refund verification.
+8. Cotton Nest reserves the right to reverse points credited through incorrect calculations, fraudulent transactions, or cancelled/returned purchases.
+9. Nest Points have no independent cash value and cannot be transferred to another account.
+10. Cotton Nest reserves the right to modify or discontinue the loyalty programme with reasonable notice.`,
 };

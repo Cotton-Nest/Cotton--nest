@@ -429,12 +429,12 @@ export async function getSiteContent(): Promise<SiteContent> {
   try {
     const cloudContent = await getSiteContentFromFirestore();
     if (cloudContent && cloudContent.company) {
-      if (!cloudContent.termsAndConditions || !cloudContent.termsAndConditions.includes('PRODUCT REPRESENTATION')) {
+      if (!cloudContent.termsAndConditions || !cloudContent.termsAndConditions.includes('Additional Terms & Conditions')) {
         cloudContent.termsAndConditions = INITIAL_SITE_CONTENT.termsAndConditions;
       }
       const cloudTimestamp = Number((cloudContent as any).updatedAt || 0);
       if (localContent && localTimestamp >= cloudTimestamp - 2000) {
-        if (!localContent.termsAndConditions || !localContent.termsAndConditions.includes('PRODUCT REPRESENTATION')) {
+        if (!localContent.termsAndConditions || !localContent.termsAndConditions.includes('Additional Terms & Conditions')) {
           localContent.termsAndConditions = INITIAL_SITE_CONTENT.termsAndConditions;
         }
         // Local is fresher, keep local and sync to cloud in background
@@ -460,7 +460,7 @@ export async function getSiteContent(): Promise<SiteContent> {
 
   // 2. If local exists, use it!
   if (localContent) {
-    if (!localContent.termsAndConditions || !localContent.termsAndConditions.includes('PRODUCT REPRESENTATION')) {
+    if (!localContent.termsAndConditions || !localContent.termsAndConditions.includes('Additional Terms & Conditions')) {
       localContent.termsAndConditions = INITIAL_SITE_CONTENT.termsAndConditions;
     }
     fetch('/api/content', {

@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
-import { ShoppingBag, Eye, MessageCircle, Check, Truck, RotateCcw, Star } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ShoppingBag, Eye, MessageCircle, Check, Truck, RotateCcw, Star, Heart } from 'lucide-react';
 import { BedsheetProduct, BedsheetVariant, COMPANY_DETAILS } from '../data/products';
 import { sendWhatsAppProductOrder } from '../utils/whatsappOrder';
 import { resolveBedsheetImage, handleImageFallback } from '../utils/imageUrl';
 import { ProductReview, getProductRatingSummary } from '../data/reviews';
+import { isWishlisted, toggleWishlistItem, onWishlistChange } from '../utils/wishlist';
 
 interface ProductCardProps {
   product: BedsheetProduct;
@@ -30,8 +31,16 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 }) => {
   const [imageLoaded, setImageLoaded] = React.useState(false);
   const [selectedVariantId, setSelectedVariantId] = useState<string | null>(null);
+  const [isFav, setIsFav] = useState<boolean>(() => isWishlisted(product.id));
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const ratingSummary = getProductRatingSummary(product.id, reviews);
+
+  useEffect(() => {
+    setIsFav(isWishlisted(product.id));
+    return onWishlistChange((list) => {
+      setIsFav(list.includes(product.id));
+    });
+  }, [product.id]);
 
   React.useEffect(() => {
     setSelectedVariantId(null);
@@ -102,7 +111,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         ) : null}
 
         {/* Owner Controls: Edit Details & Upload Photo */}
-        {isOwnerMode && (
+        {isOwnerMode ? (
           <div className="absolute top-3 right-3 z-10 flex items-center gap-1.5">
             <button
               type="button"
@@ -134,6 +143,20 @@ export const ProductCard: React.FC<ProductCardProps> = ({
               <span>📷 Photo</span>
             </button>
           </div>
+        ) : (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              const added = toggleWishlistItem(product.id);
+              setIsFav(added);
+            }}
+            title={isFav ? "Remove from Wishlist" : "Save to Wishlist"}
+            aria-label={isFav ? "Remove from Wishlist" : "Save to Wishlist"}
+            className="absolute top-3 right-3 z-10 p-2 rounded-full bg-white/90 hover:bg-white text-[#2C2420] shadow-sm backdrop-blur-xs transition-transform active:scale-90 cursor-pointer"
+          >
+            <Heart className={`w-3.5 h-3.5 transition-colors ${isFav ? 'text-[#8C2E46] fill-[#8C2E46]' : 'text-[#7A6458] hover:text-[#8C2E46]'}`} />
+          </button>
         )}
 
         {/* Quick View Hover Action */}

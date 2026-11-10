@@ -102,9 +102,42 @@ export const TermsAndConditionsView: React.FC<TermsAndConditionsViewProps> = ({
             );
           }
 
-          // Subheadings like "Gurgaon", "Rest of India", "General Conditions", "Manufacturing Defects Only", "Exchange Approval", "1. Earning Nest Points", "2. Loyalty Points Redemption"
+          // Subsection: Loyalty Points Redemption – Additional Terms & Conditions
+          if (trimmed.includes('Additional Terms & Conditions') || trimmed === 'Loyalty Points Redemption – Additional Terms & Conditions') {
+            return (
+              <div key={idx} className="pt-5 pb-1 text-base sm:text-lg font-bold font-serif-luxury text-[#8C2E46] flex items-center gap-2 border-b border-[#FAD1DC] pb-1.5 mb-2">
+                <span className="text-sm">🌸</span>
+                <h4 className="font-bold">{formatInline(trimmed)}</h4>
+              </div>
+            );
+          }
+
+          // Numbered clauses vs short numbered titles
+          const numberedMatch = trimmed.match(/^(\d+)\.\s+(.*)/);
+          if (numberedMatch) {
+            const num = numberedMatch[1];
+            const rest = numberedMatch[2];
+            // If it's a short title like "1. Earning Nest Points" or "2. Loyalty Points Redemption"
+            if (rest.length <= 40 && !rest.endsWith('.')) {
+              return (
+                <div key={idx} className="pt-3 pb-0.5 text-sm sm:text-base font-bold font-serif-luxury text-[#8C2E46]">
+                  {formatInline(trimmed)}
+                </div>
+              );
+            }
+            // Numbered clause
+            return (
+              <div key={idx} className="flex items-start gap-2.5 pl-2 sm:pl-3 text-sm sm:text-base text-[#3C322C]">
+                <span className="text-[#8C2E46] font-bold text-xs sm:text-sm mt-0.5 shrink-0 bg-[#FDEAF0] px-2 py-0.5 rounded-md border border-[#FAD1DC] min-w-[24px] text-center">
+                  {num}
+                </span>
+                <span className="pt-0.5">{formatInline(rest)}</span>
+              </div>
+            );
+          }
+
+          // Subheadings like "Gurgaon", "Rest of India", "General Conditions", "Manufacturing Defects Only", "Exchange Approval"
           const isSubHeader =
-            /^\d+\.\s+/.test(trimmed) ||
             trimmed === 'Gurgaon' ||
             trimmed === 'Rest of India' ||
             trimmed === 'General Conditions' ||

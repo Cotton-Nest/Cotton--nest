@@ -207,7 +207,7 @@ export default function App() {
 
     getPersistentContent().then((idbContent) => {
       if (isMounted && idbContent && idbContent.company) {
-        if (!idbContent.termsAndConditions || !idbContent.termsAndConditions.includes('PRODUCT REPRESENTATION')) {
+        if (!idbContent.termsAndConditions || !idbContent.termsAndConditions.includes('Additional Terms & Conditions')) {
           idbContent.termsAndConditions = INITIAL_SITE_CONTENT.termsAndConditions;
           savePersistentContent(idbContent).catch(() => {});
         }
